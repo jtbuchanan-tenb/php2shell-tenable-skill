@@ -3,8 +3,9 @@
 
 Usage: python3 render.py findings.json <outdir>
 
-findings.json is a list of rows with keys: asset, ip, fqdn, source (VM|WAS),
-plugin_id, plugin_name, php_version, port, last_seen, and optionally
+findings.json is a list of rows with keys: asset, ip, fqdn, source (VM|WAS|Cloud),
+plugin_id, plugin_name, php_version, port, last_seen, role (vulnerable for a
+finding matched by CVE, inventory for a PHP detection plugin), and optionally
 plugin_output (used to recover php_version when it is blank).
 """
 import base64
@@ -62,6 +63,15 @@ def status_for(row):
     pid = str(row.get("plugin_id", "")).strip()
     if row.get("source", "").upper() == "WAS" and pid in WAS_FIXED:
         return VULN_PATCH, WAS_FIXED[pid]
+    status, fixed = version_status(row)
+    # A CVE match means Tenable judged the asset vulnerable, so the version only picks how bad.
+    if row.get("role", "").lower() == "vulnerable" and status in (PATCHED, NOT_AFFECTED, UNKNOWN):
+        return VULN_PATCH, fixed if status == PATCHED else "see plugin"
+    return status, fixed
+
+
+def version_status(row):
+    """Return (status, fixed_version) from the row's PHP version alone."""
     v = parse_version(row.get("php_version")) or parse_version(row.get("plugin_output"))
     if not v:
         return UNKNOWN, ""

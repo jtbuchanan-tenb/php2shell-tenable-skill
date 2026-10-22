@@ -7,12 +7,15 @@ The plugin IDs, fixed versions and mitigations come from Tenable Research's [PHP
 ## What it does
 
 1. Checks that the Tenable Hexa AI MCP tools are loaded. If they are missing, it prints the setup command and stops.
-2. Re-reads the Tenable Research FAQ and adds any PHP2Shell plugin IDs published since the skill was written.
-3. Queries Tenable for each plugin:
+2. Re-reads the Tenable Research FAQ for the current CVE list, fixed releases and mitigations, then asks Tenable's plugin database for every plugin covering those CVEs. That picks up Nessus and cloud or container plugins as Tenable publishes them.
+3. Finds vulnerable findings by CVE, and reads PHP inventory from the detection plugins. At the time of writing the plugins are:
 
    | Plugin | Product | Name |
    |---|---|---|
    | 115719–115722 | Web App Scanning | PHP 8.5.x / 8.4.x / 8.3.x / 8.2.x Multiple Vulnerabilities |
+   | 369483 | Vulnerability Management | PHP < 8.2.35 / 8.3.x < 8.3.36 / 8.4.x < 8.4.27 / 8.5.x < 8.5.12 Multiple Vulnerabilities |
+   | 369521 | Vulnerability Management | GLSA-202610-02 : PHP: Multiple Vulnerabilities |
+   | 476454, 476508, 476511, 476512 | Cloud / container security | Echo and Alpine PHP package updates |
    | 48243 | Vulnerability Management | PHP Version Detection |
    | 58987 | Vulnerability Management | PHP Unsupported Version Detection |
    | 200476 | Vulnerability Management | PHP Scripting Language Installed (Windows) |
@@ -72,7 +75,7 @@ Each run writes to `~/Dev/php2shell-reports/<YYYY-MM-DD-HHMM>/`:
 |---|---|
 | Vulnerable – EOL | PHP 5.4–7.3. End of life, and the PHP project will not ship a fix. |
 | Vulnerable – backport only | PHP 7.4–8.1. No official release; fixes come only as source or vendor backports. |
-| Vulnerable – patch available | PHP 8.2–8.5 below 8.2.35, 8.3.36, 8.4.27 or 8.5.12, or a Web App Scanning hit. |
+| Vulnerable – patch available | PHP 8.2–8.5 below 8.2.35, 8.3.36, 8.4.27 or 8.5.12, or any finding Tenable matched to the CVEs. |
 | Patched | At or above the fixed release for its branch. |
 | Not affected | Below PHP 5.4. |
 | Unknown – verify | Tenable reports PHP, but the skill could not read a version. |
@@ -85,17 +88,16 @@ python3 ~/.claude/skills/php2shell-tenable/render.py <run folder>/findings.json 
 
 ## Data flows
 
-- **Tenable Hexa AI MCP** (`https://cloud.tenable.com/mcp`). The skill sends read-only queries with your API keys. It uses `tenable_one_search_findings`, `workbenches_get_vulnerability_outputs` and `workbenches_get_asset_info`.
+- **Tenable Hexa AI MCP** (`https://cloud.tenable.com/mcp`). The skill sends read-only queries with your API keys. It uses `plugins_search_plugins`, `tenable_one_search_findings`, `workbenches_get_vulnerability_outputs` and `workbenches_get_asset_info`.
 - **Your LLM provider.** As with any MCP server, the asset data Hexa returns passes through Claude Code to the model you use.
-- **tenable.com.** The skill fetches the Tenable Research FAQ once per run to check for new plugin IDs.
+- **tenable.com.** The skill fetches the Tenable Research FAQ once per run for the current CVEs, fixed releases and mitigations.
 - **No network access from `render.py`.** It writes local files and runs a local headless Chrome against them. The font, logo and images are embedded in the HTML. The report's one external reference is a link to the FAQ, which only opens if you click it.
 
 ## Known limitations
 
 - **Status comes from the PHP version alone.** Ubuntu, RHEL and other distributions often backport fixes without changing the version number, so OS-managed packages can show as vulnerable when they are patched. Check those against the vendor advisory.
-- **Hexa cuts plugin output off after about ten outputs** and offers no paging. The skill works around this by repeating the query with several age windows. A host that falls outside all of them is reported as "Unknown – verify".
-- **Hosts with several PHP installs.** When a host's output lists more than one version, the skill uses the lowest version it can see. Truncated output can hide some installs.
-- **Plugins are matched by name in Tenable One.** Filtering by plugin ID returns nothing, so the skill matches the exact plugin names. If Tenable renames a plugin, update the table in `SKILL.md`.
+- **Plugin output is limited to ten per call.** Hexa returns up to 10 distinct plugin outputs per call, with no next page, and hosts with identical output share one entry. The skill repeats the call across age windows from 7 to 365 days and merges the results. A host it still can't see is reported as "Unknown – verify".
+- **Hosts with several PHP installs.** When a host's output lists more than one version, the skill uses the lowest version it can see. A very long output can be cut short, which can hide some installs.
 - **Web App Scanning results need a scan after 21 October 2026.** The WAS plugins were published that day, so an earlier scan cannot report them.
 - **Fixed findings are excluded.** Findings Tenable marks `FIXED` are left out of the report.
 
