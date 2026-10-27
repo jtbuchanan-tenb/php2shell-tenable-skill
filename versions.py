@@ -134,8 +134,11 @@ def _apk_parse(v: str):
     if not m:
         raise ValueError(f"unparseable apk version: {v!r}")
     nums = [int(n) for n in m["nums"].split(".")]
-    sfx = [(_APK_SUFFIX[s], int(n or 0))
-           for s, n in re.findall(r"_([a-z]+)(\d*)", m["sfx"])]
+    sfx = []
+    for s, n in re.findall(r"_([a-z]+)(\d*)", m["sfx"]):
+        if s not in _APK_SUFFIX:
+            raise ValueError(f"unknown apk version suffix _{s} in {v!r}")
+        sfx.append((_APK_SUFFIX[s], int(n or 0)))
     return nums, m["letter"], sfx, int(m["rev"] or 0)
 
 
@@ -150,6 +153,21 @@ def compare_apk(a: str, b: str) -> int:
     pad = (_APK_SUFFIX[""], 0)
     return (_cmp(sa + [pad] * (n - len(sa)), sb + [pad] * (n - len(sb)))
             or _cmp(ra, rb))
+
+
+# upstream part
+
+def upstream_version(fmt: str, v: str) -> str:
+    """The upstream part of a package version: RPM version (no epoch or release), dpkg
+    upstream (no epoch or revision), apk version before -rN. ValueError if unparseable."""
+    if fmt == "rpm":
+        return _rpm_split(v)[1]
+    if fmt == "dpkg":
+        return _dpkg_split(v)[1]
+    if fmt == "apk":
+        _apk_parse(v)
+        return re.sub(r"-r\d+$", "", v)
+    raise ValueError(f"unknown package format: {fmt!r}")
 
 
 # NEVRA and distro tags

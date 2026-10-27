@@ -399,6 +399,138 @@ class ReviewFixes(unittest.TestCase):
         self.assertIn("module stream unknown", v.evidence[0].observed)
 
 
+ONE_CVE = ["CVE-2026-109618"]  # the only CVE the Alma 9, Ubuntu 24.04 and RHEL feeds carry
+
+
+def one_install(files, key, os, path, version, package, managed="True", cves=None):
+    """Give an asset one PHP install, an OS and optionally a narrower run CVE list."""
+    files["assets.json"][key]["os"] = os
+    lines = ["Nessus detected 1 install of PHP:", "", "  Path : " + path,
+             "  Version : " + version, "  Associated Package : " + package]
+    if managed is not None:
+        lines.append("  Managed by OS : " + managed)
+    for r in files["findings.json"]:
+        if r["asset_id"] == key and r["role"] == "inventory":
+            r.update(php_version=version, plugin_output="\n".join(lines) + "\n")
+    if cves:
+        files["faq.json"]["cves"] = cves
+
+
+def fire_369483(files, key, version):
+    r = next(r for r in files["findings.json"] if r["asset_id"] == key)
+    files["findings.json"].append(dict(
+        r, plugin_id="369483", role="vulnerable", php_version=version, cves=ONE_CVE,
+        plugin_name="PHP < 8.2.35 / 8.3.x < 8.3.36 / 8.4.x < 8.4.27 / 8.5.x < 8.5.12 "
+                    "Multiple Vulnerabilities"))
+    files["findings.json"][-1].pop("plugin_output", None)
+
+
+def verdict_of(edit, key):
+    vs = [v for _, v in results(edit)[key].installs]
+    assert len(vs) == 1, vs
+    return vs[0]
+
+
+class ThirdPartyRepos(unittest.TestCase):
+    """R42: rule 3 settles Patched only on the vendor's own upstream line."""
+
+    def test_sury_on_ubuntu_2204_is_backport_only(self):
+        pkg = "php8.1-cli 8.1.31-1+ubuntu22.04.1+deb.sury.org+1"
+        for fired in (False, True):
+            def edit(files):
+                one_install(files, "a-ubuntu-ok", "Linux Kernel 5.15 on Ubuntu 22.04",
+                            "/usr/bin/php8.1", "8.1.31", pkg)
+                if fired:
+                    fire_369483(files, "a-ubuntu-ok", "8.1.31")
+            with self.subTest(fired_369483=fired):
+                v = verdict_of(edit, "a-ubuntu-ok")
+                self.assertNotEqual(v.code, "patched")
+                self.assertEqual((v.code, v.rule, v.action),
+                                 ("backport-only", "5", "isolate-or-upgrade"))
+                self.assertEqual(v.evidence[0].type, "upstream-version")
+
+    def test_sury_on_ubuntu_2404_is_vulnerable(self):
+        def edit(files):
+            one_install(files, "a-ubuntu-ok", "Linux Kernel 6.8 on Ubuntu 24.04",
+                        "/usr/bin/php8.3", "8.3.30",
+                        "php8.3-cli 8.3.30-1+ubuntu24.04.1+deb.sury.org+1", cves=ONE_CVE)
+        v = verdict_of(edit, "a-ubuntu-ok")
+        self.assertEqual((v.code, v.rule, v.action, v.fix_target),
+                         ("vulnerable", "5", "patch", "8.3.36"))
+
+    def test_remi_on_alma9_is_vulnerable(self):
+        def edit(files):
+            one_install(files, "a-trunc", "AlmaLinux 9.6", "/usr/bin/php", "8.3.30",
+                        "php-cli-8.3.30-1.el9.remi.x86_64", cves=ONE_CVE)
+        v = verdict_of(edit, "a-trunc")
+        self.assertNotEqual(v.code, "patched")
+        self.assertEqual((v.code, v.rule, v.action, v.fix_target),
+                         ("vulnerable", "5", "patch", "8.3.36"))
+        self.assertIn("vendor-feed", [e.type for e in v.evidence])  # the ALSA record is kept
+
+    def test_same_upstream_vendor_update_stays_patched(self):
+        def edit(files):
+            one_install(files, "a-trunc", "Red Hat Enterprise Linux 9.6", "/usr/bin/php",
+                        "8.0.30", "php-cli-8.0.30-3.el9_6.2.x86_64", cves=ONE_CVE)
+        v = verdict_of(edit, "a-trunc")
+        self.assertEqual((v.code, v.rule), ("patched", "3"))
+
+    def test_same_upstream_alpine_stays_patched(self):
+        def edit(files):
+            one_install(files, "a-trunc", "Alpine Linux 3.22.1", "/usr/bin/php83", "8.3.36",
+                        "php83-8.3.36-r0")
+        v = verdict_of(edit, "a-trunc")
+        self.assertEqual((v.code, v.rule), ("patched", "3"))
+
+    def test_below_the_fix_stays_vulnerable(self):
+        def edit(files):
+            one_install(files, "a-trunc", "AlmaLinux 9.6", "/usr/bin/php", "8.0.27",
+                        "php-cli-8.0.27-1.el9.x86_64", cves=ONE_CVE)
+        v = verdict_of(edit, "a-trunc")
+        self.assertEqual((v.code, v.rule, v.action), ("vulnerable", "3", "vendor-update"))
+        self.assertIn("php-cli-8.0.30-3.el9_6", v.fix_target)
+
+
+class NeverPatchedGuards(unittest.TestCase):
+    """Invariant 1: no Patched without positive, same-channel evidence."""
+
+    def test_other_channel_fix_at_or_below_install_is_never_patched(self):
+        def edit(files):
+            one_install(files, "a-trunc", "Red Hat Enterprise Linux 9.7", "/usr/bin/php",
+                        "8.0.30", "php-cli-8.0.30-5.el9_7.x86_64", cves=ONE_CVE)
+        v = verdict_of(edit, "a-trunc")
+        self.assertNotEqual(v.code, "patched")
+        self.assertEqual(v.code, "unverified-no-data")
+        self.assertIn("RHSA-2026:88720 (other channel) (CVE-2026-109618)",
+                      refs(v, "vendor-feed"))
+
+    def test_not_credentialed_with_patched_feed_is_never_patched(self):
+        for auth in ([], [110723], [141118, 104410]):
+            def edit(files):
+                files["assets.json"]["a-ubuntu-ok"]["auth_plugins"] = auth
+            with self.subTest(auth=auth):
+                v = verdict_of(edit, "a-ubuntu-ok")
+                self.assertEqual((v.code, v.rule), ("unverified-credentials", "7"))
+
+    def test_managed_by_os_unknown_with_patched_feed_is_never_patched(self):
+        def edit(files):
+            one_install(files, "a-ubuntu-ok", "Linux Kernel 5.15 on Ubuntu 22.04",
+                        "/usr/bin/php8.1", "8.1.2", "php8.1-cli 8.1.2-1ubuntu2.28", managed=None)
+        v = verdict_of(edit, "a-ubuntu-ok")
+        self.assertEqual((v.code, v.rule), ("unverified-no-data", "8"))
+        self.assertIn("Managed by OS unknown", v.evidence[0].observed)
+
+
+class ApkSuffix(unittest.TestCase):
+    def test_unknown_apk_suffix_does_not_crash_and_is_not_patched(self):
+        def edit(files):
+            one_install(files, "a-trunc", "Alpine Linux 3.22.1", "/usr/bin/php83", "8.3.36",
+                        "php83-8.3.36_foo1-r0")
+        v = verdict_of(edit, "a-trunc")
+        self.assertNotEqual(v.code, "patched")
+        self.assertEqual((v.code, v.rule), ("unverified-no-data", "8"))
+
+
 class LoadRun(unittest.TestCase):
     def test_empty_run(self):
         d = Path(tempfile.mkdtemp())

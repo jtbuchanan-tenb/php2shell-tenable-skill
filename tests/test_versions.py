@@ -1,7 +1,7 @@
 import unittest
 
 from versions import (Nevra, compare_apk, compare_dpkg, compare_rpm,
-                      dist_tag, parse_nevra)
+                      dist_tag, parse_nevra, upstream_version)
 
 
 def sign(n):
@@ -43,6 +43,25 @@ class VersionTests(unittest.TestCase):
             ("1.0_rc1-r0", "1.0-r0", -1),
             ("1.0_p1-r0", "1.0-r0", 1),
         ])
+
+    def test_apk_unknown_suffix_is_value_error(self):
+        for a, b in [("8.3.36_foo1-r0", "8.3.36-r0"), ("8.3.36-r0", "8.3.36_zz-r1")]:
+            with self.subTest(a=a, b=b), self.assertRaises(ValueError):
+                compare_apk(a, b)
+
+    def test_upstream_version(self):
+        for fmt, v, want in [
+                ("rpm", "8.0.30-3.el9_6.2", "8.0.30"),
+                ("rpm", "1:8.3.30-1.el9.remi", "8.3.30"),
+                ("dpkg", "8.1.31-1+ubuntu22.04.1+deb.sury.org+1", "8.1.31"),
+                ("dpkg", "1:8.2.35-1~deb12u1", "8.2.35"),
+                ("dpkg", "8.2.35", "8.2.35"),
+                ("apk", "8.3.36-r0", "8.3.36"),
+                ("apk", "8.3.36_rc1-r2", "8.3.36_rc1")]:
+            with self.subTest(fmt=fmt, v=v):
+                self.assertEqual(upstream_version(fmt, v), want)
+        with self.assertRaises(ValueError):
+            upstream_version("apk", "8.3.36_foo1-r0")
 
     def test_parse_nevra(self):
         self.assertEqual(parse_nevra("php-cli-8.0.30-3.el9_6.x86_64"),

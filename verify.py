@@ -4,8 +4,10 @@ load_run(run_dir) reads the run folder. judge(run) groups findings by asset and
 settles each install by the first rule that applies (rules 1 > 2 > 3 > 4 > 4a > 5
 > 6 > 7 > 8). Every rule's evidence is gathered; the order sets precedence only,
 and positive evidence beats absence. "Patched" needs positive evidence: a
-same-channel vendor fix for every run CVE at or below the installed package, or,
-outside distro packages, an upstream release at or above the fixed one.
+same-channel vendor fix for every run CVE at or below the installed package on the
+same upstream version, or an upstream release at or above the fixed one where no
+vendor fix applies (non-OS installs, Windows, and OS-packaged builds on another
+upstream line than the vendor's, such as third-party repositories).
 """
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ from urllib.parse import urlparse
 from advisories import OTHER_CHANNEL, Advisories
 from inventory import (UNPATCHED_PREFIXES, Distro, Install, classify, coverage,
                        coverage_published, distro_for, parse_installs, stream_of)
-from versions import compare_apk, compare_dpkg, compare_rpm, parse_nevra
+from versions import compare_apk, compare_dpkg, compare_rpm, parse_nevra, upstream_version
 
 FAQ_URL = ("https://www.tenable.com/blog/php2shell-cve-2026-109618-cve-2026-109619-"
            "frequently-asked-questions-about-critical-php-remote")
@@ -321,17 +323,32 @@ def _package(distro: Optional[Distro], package: str):
     return (m.group(1), m.group(2)) if m else None
 
 
+# _rule3's result when the install is at or above the vendor fix but on another
+# upstream version: a build from outside the vendor (a third-party repository), so
+# rule 3 does not settle it and rule 5 judges it by upstream version.
+OTHER_UPSTREAM = ("other-upstream", "")
+
+
 def _rule3(family: str, pkg: tuple, recs: dict):
-    """("vulnerable", fixed package) | ("patched", "") | None when unsettled."""
-    cmp = _COMPARE[_FORMAT[family]]
+    """("vulnerable", fixed package) | ("patched", "") | OTHER_UPSTREAM | None when unsettled.
+
+    Patched only when, for every CVE, the install is at or above each same-channel fix
+    and its upstream version equals the highest fix's upstream version (R42)."""
+    fmt = _FORMAT[family]
+    cmp = _COMPARE[fmt]
     binary, installed = pkg
-    below, settled = [], bool(recs)
+    below, settled, other_line = [], bool(recs), False
     try:
+        mine = upstream_version(fmt, installed)
         for rs in recs.values():
             fixes = [r for r in rs if r.status == "fixed" and r.fixed_version]
             same = [r for r in fixes if not r.advisory_id.endswith(OTHER_CHANNEL)]
             if same:
                 low = [r for r in same if cmp(installed, r.fixed_version) < 0]
+                top = max(same, key=cmp_to_key(lambda a, b: cmp(a.fixed_version,
+                                                                 b.fixed_version)))
+                if not low and upstream_version(fmt, top.fixed_version) != mine:
+                    other_line = True
             else:  # another channel's fix only shows vulnerable when below every fix
                 low = [r for r in fixes if cmp(installed, r.fixed_version) < 0]
                 low = low if fixes and len(low) == len(fixes) else []
@@ -343,6 +360,8 @@ def _rule3(family: str, pkg: tuple, recs: dict):
         top = max(below, key=cmp_to_key(lambda a, b: cmp(a.fixed_version, b.fixed_version)))
         label = binary + (" " if _FORMAT[family] == "dpkg" else "-") + top.fixed_version
         return "vulnerable", label + (" (%s)" % top.advisory_id if top.advisory_id else "")
+    if other_line:
+        return OTHER_UPSTREAM
     return ("patched", "") if settled else None
 
 
@@ -366,6 +385,8 @@ def _judge(ctx: _Ctx, asset: dict, state: str, slot: _Slot) -> Verdict:
             for c in ctx.cves} if distro_pkg and inst.package else {}
     ev_feed = [_feed_ev(r, pkg[1] if pkg else inst.package) for rs in recs.values() for r in rs]
     r3 = _rule3(distro.family, pkg, recs) if pkg and recs and state == "credentialed" else None
+    other_upstream = r3 == OTHER_UPSTREAM  # not the vendor's build: judged by rule 5
+    r3 = None if other_upstream else r3
 
     def done(code, rule, first, action="", target=""):
         return _verdict(code, rule, first + ev_plugin + ev_feed + ev_cred, action, target)
@@ -406,7 +427,7 @@ def _judge(ctx: _Ctx, asset: dict, state: str, slot: _Slot) -> Verdict:
         if target:
             return done("no-stream-fix", "4a", ev, "upgrade-stream", "php:%s stream" % target)
         return done("no-vendor-fix", "4", ev, "isolate-or-upgrade")
-    r5 = ctx.rule5(inst.version, fired) if managed is False or windows else None
+    r5 = ctx.rule5(inst.version, fired) if managed is False or windows or other_upstream else None
     if r5:
         return done(r5[0], "5", [ctx.upstream_ev(inst.version, r5[2], r5[0])], r5[1], r5[2])
     # A module-stream family with no package has no known stream, so no rule 6.
