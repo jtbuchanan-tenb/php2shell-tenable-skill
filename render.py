@@ -59,7 +59,8 @@ EVIDENCE_LABELS = {"tenable-plugin": "Tenable plugin", "vendor-feed": "Vendor fe
                    "absence": "No matching plugin"}
 YES = {True: "yes", False: "no"}
 RULE_4A = "This is a PHP minor-version upgrade: test applications before switching streams."
-TRUNCATED = "More PHP installs may exist on this host than Tenable's output shows."
+TRUNCATED = ("The plugin output the skill read lists the first PHP installs only; "
+             "more may exist on this host.")
 PLAN_COLUMNS = ("Rank", "Bucket", "Asset", "Owner", "Action", "Fix target", "Reason", "Flags",
                 "Credentials", "ACR / AES / Attack path")
 VERIFY_COLUMNS = ("Asset", "Owner", "Reason", "Next step", "Credentials",

@@ -26,7 +26,8 @@ OUTPUTS = ("action-plan.json", "report.html", "report.csv", "auth-followup.txt")
 BANNER = ("2 of 10 PHP hosts weren't scanned with working credentials, so their backport "
           "status can't be verified. Configure credentialed scans and rescan.")
 RULE_4A = "This is a PHP minor-version upgrade: test applications before switching streams."
-TRUNCATED = "More PHP installs may exist on this host than Tenable's output shows."
+TRUNCATED = ("The plugin output the skill read lists the first PHP installs only; "
+             "more may exist on this host.")
 
 # Where every leaf field of an action-plan entry lands in report.csv. verification.rescan is
 # always true, so it has no column; that is the one exemption.

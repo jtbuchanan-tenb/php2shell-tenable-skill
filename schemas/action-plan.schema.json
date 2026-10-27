@@ -215,7 +215,7 @@
           }
         }
       },
-      "description": "Counts of PHP hosts. by_verdict uses each host's headline verdict (worst install). output_truncated_assets lists hosts whose install list was cut off, so more installs may exist."
+      "description": "Counts of PHP hosts. by_verdict uses each host's headline verdict (worst install). output_truncated_assets lists hosts whose plugin output, as the skill read it, ends with the truncation marker, so more installs may exist."
     },
     "items": {
       "type": "array",
