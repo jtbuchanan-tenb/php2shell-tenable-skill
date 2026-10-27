@@ -1,0 +1,302 @@
+from __future__ import annotations
+
+import csv
+import html
+import io
+import json
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import render
+from tests.schema_check import validate
+from tests.test_verify import SHOP, run_dir
+
+ROOT = Path(__file__).parent.parent
+OWNERS = Path(__file__).parent / "fixtures" / "owners.csv"
+SCHEMA = json.loads((ROOT / "schemas" / "action-plan.schema.json").read_text())
+AUTH_URL = "https://exchange.tenable.com/skills/auth-failure-analyzer/"
+OUTPUTS = ("action-plan.json", "report.html", "report.csv", "auth-followup.txt")
+BANNER = ("2 of 10 PHP hosts weren't scanned with working credentials, so their backport "
+          "status can't be verified. Configure credentialed scans and rescan.")
+RULE_4A = "This is a PHP minor-version upgrade: test applications before switching streams."
+TRUNCATED = "More PHP installs may exist on this host than Tenable's output shows."
+
+# Where every leaf field of an action-plan entry lands in report.csv. verification.rescan is
+# always true, so it has no column; that is the one exemption.
+LEAF_COLUMNS = {
+    "item": {"key": "key", "asset_id": "asset_id", "hostname": "hostname", "fqdn": "fqdn",
+             "ip": "ip", "url": "url", "owner": "owner", "owner_source": "owner_source",
+             "bucket": "bucket", "rank": "rank", "reason": "reason",
+             "compromise_note": "compromise_note", "action": "action",
+             "fix_target": "fix_target", "interim_mitigations": "interim_mitigations",
+             "next_step": "next_step"},
+    "install": {"version": "version", "package": "package", "path": "path", "port": "port",
+                "source_plugin": "source_plugin", "verdict": "verdict",
+                "verdict_label": "verdict_label", "rule": "rule"},
+    "evidence": {"type": "evidence_type", "source": "evidence_source",
+                 "reference_id": "evidence_reference", "url": "evidence_url",
+                 "observed": "evidence_observed", "expected": "evidence_expected",
+                 "fetched_at": "evidence_fetched_at"},
+    "flags": {k: k for k in ("internet_facing", "serves_web", "possible_compromise", "stale",
+                             "output_truncated", "credential_state", "unpatched_scan")},
+    "verification": {"plugins_should_stop": "plugins_should_stop"},
+    "context": {k: k for k in ("aes", "acr", "apa_level", "last_seen")},
+}
+EXEMPT = {("verification", "rescan")}
+NESTED = {"php_installs", "flags", "verification", "context"}
+
+
+def entries(plan):
+    return plan["items"] + plan["verify_first"]
+
+
+def read_csv(path: Path) -> list:
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        return list(csv.DictReader(f))
+
+
+def cell(value) -> str:
+    """The CSV text for a plan value (before the formula guard)."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+class Fixture(unittest.TestCase):
+    """The shared fixture rendered once through the CLI, PDF included when Chrome exists."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = run_dir()
+        cls.proc = subprocess.run(
+            [sys.executable, str(ROOT / "render.py"), str(cls.dir), "--owners", str(OWNERS)],
+            capture_output=True, text=True, timeout=300)
+        cls.plan = json.loads((cls.dir / "action-plan.json").read_text(encoding="utf-8"))
+        cls.html = (cls.dir / "report.html").read_text(encoding="utf-8")
+        cls.rows = read_csv(cls.dir / "report.csv")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.dir.parent)
+
+    def test_outputs_exist(self):
+        self.assertEqual(self.proc.returncode, 0, self.proc.stderr)
+        for name in OUTPUTS:
+            self.assertTrue((self.dir / name).is_file(), name)
+        if render.find_chrome() is None:
+            self.skipTest("no Chrome: PDF not checked")
+        self.assertTrue((self.dir / "report.pdf").is_file())
+
+    def test_cli_output(self):
+        lines = self.proc.stdout.splitlines()
+        self.assertEqual(lines[:6], ["items=7 verify_first=4 assets=12", "  FIRST: 2",
+                                     "  NEXT: 5", "  SOON: 0", "  VERIFY: 4",
+                                     "feed_failed=osv CVE-2026-109618"])
+        printed = {Path(x).name for x in lines[6:]}
+        self.assertTrue(set(OUTPUTS) <= printed, lines)
+
+    def test_plan_is_valid(self):
+        self.assertEqual(validate(self.plan, SCHEMA), [])
+        self.assertEqual([i["rank"] for i in self.plan["items"]], list(range(1, 8)))
+
+    def test_auth_followup(self):
+        text = (self.dir / "auth-followup.txt").read_text(encoding="utf-8")
+        self.assertIn(AUTH_URL, text)
+        self.assertIn("analyze auth failures on a-authfail", text)
+
+    def test_csv_matches_plan(self):
+        installs = sum(len(e["php_installs"]) for e in entries(self.plan))
+        self.assertEqual(len(self.rows), installs)
+        header = list(self.rows[0])
+        self.assertEqual(header[:40], ["rank", "bucket", "asset_id", "hostname", "fqdn", "ip",
+                                       "url", "owner", "owner_source", "action", "fix_target",
+                                       "reason", "verdict", "verdict_label", "rule", "version",
+                                       "package", "path", "port", "source_plugin",
+                                       "internet_facing", "serves_web", "possible_compromise",
+                                       "stale", "output_truncated", "credential_state",
+                                       "unpatched_scan", "aes", "acr", "apa_level", "last_seen",
+                                       "evidence_type", "evidence_source", "evidence_reference",
+                                       "evidence_url", "evidence_observed", "evidence_expected",
+                                       "evidence_fetched_at", "evidence_more", "next_step"])
+        self.assertEqual(header[40:], ["key", "interim_mitigations", "plugins_should_stop",
+                                       "compromise_note"])
+        for cols in LEAF_COLUMNS.values():
+            self.assertTrue(set(cols.values()) <= set(header), cols)
+
+        def check_leaves(kind, obj):
+            for name in obj:
+                if name in NESTED and kind == "item" or (kind, name) in EXEMPT:
+                    continue
+                self.assertIn(name, LEAF_COLUMNS[kind], "%s.%s has no CSV column" % (kind, name))
+
+        rows = iter(self.rows)
+        for e in entries(self.plan):
+            check_leaves("item", e)
+            for kind in ("flags", "verification", "context"):
+                check_leaves(kind, e[kind])
+            for inst in e["php_installs"]:
+                check_leaves("install", {k: v for k, v in inst.items() if k != "evidence"})
+                for ev in inst["evidence"]:
+                    check_leaves("evidence", ev)
+                row = next(rows)
+                self.assertEqual(row["key"], e["key"])
+                for name, col in LEAF_COLUMNS["item"].items():
+                    want = e.get(name)
+                    if name == "interim_mitigations":
+                        want = " | ".join(want)
+                    self.assertEqual(row[col], cell(want), (e["key"], col))
+                for kind in ("flags", "context"):
+                    for name, col in LEAF_COLUMNS[kind].items():
+                        self.assertEqual(row[col], cell(e[kind][name]), (e["key"], col))
+                self.assertEqual(row["plugins_should_stop"],
+                                 " ".join(e["verification"]["plugins_should_stop"]))
+                for name, col in LEAF_COLUMNS["install"].items():
+                    self.assertEqual(row[col], cell(inst[name]), (e["key"], col))
+                first, rest = inst["evidence"][0], inst["evidence"][1:]
+                for name, col in LEAF_COLUMNS["evidence"].items():
+                    self.assertEqual(row[col], cell(first[name]), (e["key"], col))
+                self.assertEqual(row["evidence_more"], " | ".join(
+                    "%s %s %s→%s" % (x["source"], x["reference_id"], x["observed"], x["expected"])
+                    for x in rest))
+        self.assertIsNone(next(rows, None))
+        for row in self.rows:
+            self.assertEqual(row["rank"] == "", row["bucket"] == "VERIFY", row["key"])
+
+    def test_html_has_every_item_and_detail(self):
+        doc = self.html
+        for e in entries(self.plan):
+            self.assertIn(html.escape(e["hostname"], quote=True), doc)
+            if e["fix_target"]:
+                self.assertIn(html.escape(e["fix_target"], quote=True), doc)
+            for inst in e["php_installs"]:
+                self.assertIn(html.escape(inst["evidence"][0]["reference_id"], quote=True), doc)
+        for e in self.plan["verify_first"]:
+            self.assertIn(html.escape(e["next_step"], quote=True), doc)
+        self.assertEqual(doc.count('<tr class="row"'), len(entries(self.plan)))
+        self.assertEqual(doc.count('<tr class="detail"'), len(entries(self.plan)))
+        for text in (AUTH_URL, BANNER, "7 hosts need action.", "2 have no named owner.",
+                     RULE_4A, TRUNCATED, "Take it offline until upgraded",
+                     "Upgrade to a supported stream (php:8.2 stream); isolate if internet-facing",
+                     "Upgrade PHP to 8.3.36", "Assume compromise; check for exploitation since "
+                     "2026-10-17.", "HTTP 429", "analyze auth failures on a-authfail"):
+            self.assertIn(text, doc)
+        for label in ("Fix FIRST", "Fix NEXT", "Fix SOON", "Verify first", "Patched (verified)",
+                      "Likely patched", "Not affected"):
+            self.assertIn(label, doc)
+        self.assertIn("api.osv.dev/v1/vulns/DEBIAN-CVE-2026-109618", doc)
+        print_css = doc[doc.index("@media print"):doc.index("</style>")]
+        self.assertRegex(print_css, r"\n\s*tr\.detail\s*\{\s*display:\s*table-row")
+        self.assertRegex(print_css, r"\.block\.plan\s*\{\s*break-before:\s*page")
+
+    def test_html_is_self_contained(self):
+        for m in re.finditer(r'(?:src|href)="([^"]*)"', self.html):
+            url = m.group(1)
+            if m.group(0).startswith("src"):
+                self.assertTrue(url.startswith("data:"), url)
+        self.assertNotIn("@import", self.html)
+        self.assertNotIn("<link", self.html)
+
+
+class OwnerFileError(unittest.TestCase):
+    def test_bad_owner_file_exits_nonzero(self):
+        d = run_dir()
+        try:
+            bad = d.parent / "owners.csv"
+            bad.write_text("hostname,team\nweb01,Web\n", encoding="utf-8")
+            proc = subprocess.run([sys.executable, str(ROOT / "render.py"), str(d),
+                                   "--owners", str(bad)], capture_output=True, text=True,
+                                  timeout=60)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("no 'owner' column", proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+        finally:
+            shutil.rmtree(d.parent)
+
+
+class InProcess(unittest.TestCase):
+    def render(self, edit=None, owners=OWNERS):
+        d = run_dir(edit)
+        self.addCleanup(shutil.rmtree, d.parent)
+        plan, files = render.render(d, owners, pdf=False)
+        return d, plan, files
+
+    def test_escaping(self):
+        def edit(files):
+            files["assets.json"]["a-rhel9"]["name"] = "<script>x</script>"
+            for row in files["findings.json"]:
+                if row["asset_id"] == "a-rhel9":
+                    row["asset"] = "<script>x</script>"
+                    if row["plugin_id"] == "370210":
+                        row["plugin_name"] = '=HYPERLINK("x")'
+            files["advisories/index.json"][2]["url"] = "javascript:alert(1)"
+        d, plan, _ = self.render(edit)
+        doc = (d / "report.html").read_text(encoding="utf-8")
+        self.assertIn("&lt;script&gt;x&lt;/script&gt;", doc)
+        self.assertNotIn("<script>x", doc)
+        self.assertIn("=HYPERLINK(&quot;x&quot;)", doc)
+        self.assertNotIn('href="javascript:', doc)
+        cells = [c for row in read_csv(d / "report.csv") for c in row.values()]
+        self.assertIn("'=HYPERLINK(\"x\")", cells)
+        self.assertFalse([c for c in cells if c[:1] in ("=", "+", "-", "@")])
+
+    def test_formula_guard(self):
+        for text in ("=1+1", "+1", "-1", "@SUM(A1)"):
+            self.assertEqual(render.csv_cell(text), "'" + text)
+        for value, want in (("a=b", "a=b"), ("", ""), (None, ""), (True, "true"), (7, "7")):
+            self.assertEqual(render.csv_cell(value), want)
+
+    def test_empty_run(self):
+        def edit(files):
+            files["findings.json"] = []
+            files["assets.json"] = {}
+        d, plan, _ = self.render(edit)
+        self.assertEqual(plan["items"], [])
+        self.assertEqual(plan["verify_first"], [])
+        doc = (d / "report.html").read_text(encoding="utf-8")
+        self.assertIn("No PHP installs were found in this run.", doc)
+        self.assertNotIn("weren't scanned with working credentials", doc)
+        self.assertEqual(read_csv(d / "report.csv"), [])
+        for name in OUTPUTS:
+            self.assertTrue((d / name).is_file(), name)
+
+    def test_render_offline(self):
+        def refuse(*args, **kwargs):
+            raise OSError("network access attempted")
+        with mock.patch.object(socket, "socket", refuse), \
+                mock.patch.object(socket, "create_connection", refuse):
+            d, plan, files = self.render()
+        self.assertEqual(len(plan["items"]), 7)
+        self.assertTrue((d / "report.html").is_file())
+        self.assertNotIn(d / "report.pdf", files)
+
+    def test_pdf_failure_warns_and_continues(self):
+        d = run_dir()
+        self.addCleanup(shutil.rmtree, d.parent)
+        (d / "report.pdf").write_text("stale", encoding="utf-8")
+        fail = subprocess.CalledProcessError(1, ["chrome"])
+        with mock.patch.object(render, "find_chrome", return_value="/bin/chrome"), \
+                mock.patch.object(render.subprocess, "run", side_effect=fail), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            plan, files = render.render(d, OWNERS)
+        self.assertIn("WARN: Chrome could not print the PDF", out.getvalue())
+        self.assertFalse((d / "report.pdf").exists())
+        self.assertNotIn(d / "report.pdf", files)
+        self.assertTrue((d / "report.html").is_file())
+
+    def test_no_owner_file(self):
+        _, plan, _ = self.render(owners=None)
+        self.assertEqual(plan["coverage"]["by_owner_source"].get("owner-file", 0), 0)
+        self.assertIn(SHOP, [e["key"] for e in plan["items"]])
+
+
+if __name__ == "__main__":
+    unittest.main()
