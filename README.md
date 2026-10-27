@@ -19,7 +19,7 @@ The skill only reads data in Tenable. It never launches scans, creates tags or c
 ## Prerequisites
 
 - **Claude Code.**
-- **Tenable One Foundation or Advanced.** Hexa AI MCP must be turned on under Settings > Hexa AI, and your role must be Standard User or higher. The skill runs against commercial Tenable One environments, where Hexa AI MCP is offered.
+- **Tenable One Foundation or Advanced.** Hexa AI MCP must be turned on under Settings > Hexa AI, and your role must be Standard User or higher. The Hexa MCP is not available in FedRAMP Moderate environments.
 - **Tenable API keys**, generated under Settings > My Account > API Keys.
 - **Credentialed scans.** A host's installed package version, and so its status, can only be verified when Tenable scanned it with working credentials (or with a Nessus Agent). Hosts without them are listed under Verify first.
 - **Python 3.** The scripts use only the standard library.
