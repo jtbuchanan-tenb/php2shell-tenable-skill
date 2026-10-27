@@ -560,7 +560,8 @@
           "type": "boolean"
         },
         "serves_web": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "False only when there is no WAS finding, no HTTP service was recorded (plugin 10107 absent or unknown), the install list is complete (output_truncated false), and every PHP install is command-line (no php-fpm, php-cgi, mod_php or libphp). False ranks an actionable host Fix SOON instead of Fix NEXT."
         },
         "possible_compromise": {
           "type": "boolean"

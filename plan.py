@@ -167,8 +167,9 @@ def _command_line(install) -> bool:
 
 
 def serves_web(result) -> bool:
-    """False only when all PHP is command-line and the host shows no HTTP service."""
-    if _is_was(result) or result.asset.get("http_service") is not False:
+    """False only when there is no WAS finding, no HTTP service seen (10107; unknown counts
+    as not seen), the install list is complete, and every install is command-line PHP."""
+    if _is_was(result) or result.asset.get("http_service") is True or result.output_truncated:
         return True
     return not (result.installs and all(_command_line(i) for i, _ in result.installs))
 

@@ -83,7 +83,7 @@ Each run writes to `~/Dev/php2shell-reports/<YYYY-MM-DD-HHMM>/`:
 |---|---|
 | Fix FIRST | Confirmed vulnerable and internet-facing: a Web App Scanning finding or a public IP address. |
 | Fix NEXT | Confirmed vulnerable and serving web requests. |
-| Fix SOON | Confirmed vulnerable, command-line PHP only and no HTTP service seen. |
+| Fix SOON | Confirmed vulnerable, and every PHP install is command-line only: no php-fpm, php-cgi or Apache PHP module, a complete install list, no HTTP service recorded (plugin 10107) and no Web App Scanning finding. |
 | Verify first | Not yet confirmed either way. Each host has a next step. |
 
 Within a bucket, hosts are ranked by attack path level (critical, then high), then by Tenable's ACR and AES. Each Fix item carries an action: `patch`, `vendor-update`, `upgrade-stream` or `isolate-or-upgrade`.

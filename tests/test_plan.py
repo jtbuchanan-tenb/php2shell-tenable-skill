@@ -298,6 +298,38 @@ class Content(unittest.TestCase):
         self.assertTrue(any(s["error"] == "HTTP 429" for s in failed))
 
 
+class Soon(unittest.TestCase):
+    """R44: SOON for a host whose PHP is all command-line, output complete, no 10107, no WAS."""
+
+    def test_cli_only_host_with_unknown_http_is_soon(self):
+        plan, res = built(lambda f: set_asset(f, "a-ol8", http_service=None))
+        self.assertFalse(serves_web(res["a-ol8"]))
+        item = by_key(plan)["a-ol8"]
+        self.assertEqual((item["bucket"], item["flags"]["serves_web"]), ("SOON", False))
+        self.assertIn("no sign PHP serves web requests", item["reason"])
+
+    def test_truncated_output_is_next(self):
+        def edit(files):
+            set_asset(files, "a-ol8", http_service=None)
+            for r in files["findings.json"]:
+                if r["asset_id"] == "a-ol8" and r["role"] == "inventory":
+                    r["plugin_output"] = r["plugin_output"].replace(
+                        "1 install", "2 installs") + "\n  Path : /usr/sb ... (truncated)"
+        plan, res = built(edit)
+        self.assertTrue(res["a-ol8"].output_truncated)
+        self.assertTrue(serves_web(res["a-ol8"]))
+        self.assertEqual(by_key(plan)["a-ol8"]["bucket"], "NEXT")
+
+    def test_http_service_seen_is_next(self):
+        plan, res = built(lambda f: set_asset(f, "a-ol8", http_service=True))
+        self.assertTrue(serves_web(res["a-ol8"]))
+        self.assertEqual(by_key(plan)["a-ol8"]["bucket"], "NEXT")
+
+    def test_web_install_with_unknown_http_is_next(self):
+        plan, res = built(lambda f: set_asset(f, "a-rhel9", http_service=None))  # php-cgi
+        self.assertEqual(by_key(plan)["a-rhel9"]["bucket"], "NEXT")
+
+
 class Verify(unittest.TestCase):
     def test_next_step_feed_failed_with_known_package(self):
         def fail(files):
