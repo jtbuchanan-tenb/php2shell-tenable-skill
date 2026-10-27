@@ -243,6 +243,16 @@ def _rows(entries: list, cells, columns: tuple, empty: str) -> str:
     return "".join(out)
 
 
+def plan_details(plan: dict) -> str:
+    """Print-only section: the ranked table prints rows only, then every item's detail."""
+    if not plan["items"]:
+        return ""
+    return ('<section class="block print-detail"><h2>Action plan detail</h2>%s</section>' % "".join(
+        '<article class="print-item"><h3 class="detail-head">%d · %s · %s</h3>%s</article>'
+        % (e["rank"], BUCKET_LABELS[e["bucket"]], esc(e["hostname"] or e["url"] or e["key"]),
+           detail(e)) for e in plan["items"]))
+
+
 def _plan_cells(e: dict) -> list:
     return [(' class="rank"', '<span class="toggle" aria-hidden="true"></span>%d' % e["rank"]),
             (' class="nowrap"', _swatch(BUCKET_LABELS[e["bucket"]], BUCKET_COLORS[e["bucket"]])),
@@ -277,12 +287,14 @@ def banner(plan: dict) -> str:
     lines = []
     if n["assets"] == 0:
         lines.append("No PHP installs were found in this run.")
-    if n["uncredentialed"] and n["credential_scope"]:
-        lines.append("%d of %d PHP hosts weren't scanned with working credentials, so their "
-                     "backport status can't be verified. Configure credentialed scans and "
-                     "rescan." % (n["uncredentialed"], n["credential_scope"]))
-    lines.append("%d hosts need action." % len(plan["items"]))
-    lines.append("%d have no named owner." % plan["coverage"]["unassigned_actionable"])
+    bad, k, u = n["uncredentialed"], len(plan["items"]), plan["coverage"]["unassigned_actionable"]
+    if bad and n["credential_scope"]:
+        lines.append("%d of %d PHP hosts %s scanned with working credentials, so %s backport "
+                     "status can't be verified. Configure credentialed scans and rescan."
+                     % (bad, n["credential_scope"], "wasn't" if bad == 1 else "weren't",
+                        "its" if bad == 1 else "their"))
+    lines.append("%d %s action." % (k, "host needs" if k == 1 else "hosts need"))
+    lines.append("%d %s no named owner." % (u, "has" if u == 1 else "have"))
     return "".join("<p>%s</p>" % line for line in lines)
 
 
@@ -428,6 +440,7 @@ def write_html(plan: dict, path) -> None:
         plan_rows=_rows(plan["items"], _plan_cells, PLAN_COLUMNS,
                         "No PHP installs were found in this run." if not n["assets"]
                         else "No confirmed-vulnerable hosts in this run."),
+        plan_details=plan_details(plan),
         verify_rows=_rows(plan["verify_first"], _verify_cells, VERIFY_COLUMNS,
                           "No hosts need verification."),
         auth_section=auth_section(plan), sources_rows=sources_rows(plan))
@@ -449,12 +462,13 @@ def find_chrome():
 
 
 def write_pdf(html_path, pdf_path):
-    chrome = find_chrome()
-    if not chrome:
-        print("WARN: no Chrome/Chromium found; PDF skipped. Print report.html to PDF manually.")
-        return False
     if pdf_path.exists():  # never leave a PDF from an earlier render beside a newer plan
         pdf_path.unlink()
+    chrome = find_chrome()
+    if not chrome:  # warnings go to stderr: stdout is the machine-read summary
+        print("WARN: no Chrome/Chromium found; PDF skipped. Print report.html to PDF manually.",
+              file=sys.stderr)
+        return False
     profile = tempfile.mkdtemp(prefix=".chrome-", dir=pdf_path.parent)
     try:
         subprocess.run([chrome, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
@@ -463,7 +477,7 @@ def write_pdf(html_path, pdf_path):
                        check=True, capture_output=True, timeout=120)
     except subprocess.SubprocessError as exc:
         print("WARN: Chrome could not print the PDF (%s). Print report.html to PDF manually."
-              % exc.__class__.__name__)
+              % exc.__class__.__name__, file=sys.stderr)
         return False
     finally:
         shutil.rmtree(profile, ignore_errors=True)

@@ -194,8 +194,23 @@ class Fixture(unittest.TestCase):
             self.assertIn(label, doc)
         self.assertIn("api.osv.dev/v1/vulns/DEBIAN-CVE-2026-109618", doc)
         print_css = doc[doc.index("@media print"):doc.index("</style>")]
-        self.assertRegex(print_css, r"\n\s*tr\.detail\s*\{\s*display:\s*table-row")
         self.assertRegex(print_css, r"\.block\.plan\s*\{\s*break-before:\s*page")
+        # Print: the ranked table carries rows only; the details follow in their own section.
+        self.assertRegex(print_css, r"\.block\.plan tr\.detail[^{]*\{\s*display:\s*none")
+        self.assertRegex(print_css, r"\.print-detail\s*\{\s*display:\s*block")
+        self.assertRegex(print_css, r"\n\s*tr\.detail\s*\{\s*display:\s*table-row")  # Verify first
+        section = doc[doc.index('<section class="block print-detail"'):]
+        section = section[:section.index("</section>")]
+        heads = re.findall(r'<h3 class="detail-head">(\d+) ', section)
+        self.assertEqual(heads, [str(i["rank"]) for i in self.plan["items"]])
+        for e in self.plan["items"]:
+            self.assertIn(html.escape(e["key"], quote=True), section)
+        self.assertIn(RULE_4A, section)
+        self.assertIn(TRUNCATED, section)
+        self.assertLess(doc.index('<section class="block plan"'), section and
+                        doc.index('<section class="block print-detail"'))
+        self.assertLess(doc.index('<section class="block print-detail"'),
+                        doc.index('<section class="block verify"'))
 
     def test_html_is_self_contained(self):
         for m in re.finditer(r'(?:src|href)="([^"]*)"', self.html):
@@ -248,6 +263,40 @@ class InProcess(unittest.TestCase):
         self.assertIn("'=HYPERLINK(\"x\")", cells)
         self.assertFalse([c for c in cells if c[:1] in ("=", "+", "-", "@")])
 
+    def test_cli_without_chrome_keeps_stdout_contract(self):
+        d = run_dir()
+        self.addCleanup(shutil.rmtree, d.parent)
+        with mock.patch.object(render, "find_chrome", return_value=None), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out, \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            code = render.main([str(d), "--owners", str(OWNERS)])
+        self.assertEqual(code, 0)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines[0], "items=7 verify_first=4 assets=12")
+        self.assertNotIn("WARN", out.getvalue())
+        self.assertIn("WARN: no Chrome/Chromium found; PDF skipped", err.getvalue())
+        self.assertNotIn(str(d / "report.pdf"), lines)
+        self.assertFalse((d / "report.pdf").exists())
+
+    def test_banner_singular(self):
+        plan = {"coverage": {"by_credential_state": {"credentialed": 4, "not-credentialed": 1,
+                                                     "failed": 0, "not-applicable": 2},
+                             "unassigned_actionable": 1},
+                "items": [{"bucket": "FIRST", "php_installs": [{}]}], "verify_first": []}
+        text = render.banner(plan)
+        for sentence in ("1 of 5 PHP hosts wasn't scanned with working credentials, so its "
+                         "backport status can't be verified. Configure credentialed scans and "
+                         "rescan.", "1 host needs action.", "1 has no named owner."):
+            self.assertIn(sentence, text)
+        plan["coverage"]["by_credential_state"]["failed"] = 1
+        plan["coverage"]["unassigned_actionable"] = 0
+        plan["items"].append({"bucket": "NEXT", "php_installs": [{}]})
+        text = render.banner(plan)
+        for sentence in ("2 of 6 PHP hosts weren't scanned with working credentials, so their "
+                         "backport status can't be verified.", "2 hosts need action.",
+                         "0 have no named owner."):
+            self.assertIn(sentence, text)
+
     def test_formula_guard(self):
         for text in ("=1+1", "+1", "-1", "@SUM(A1)"):
             self.assertEqual(render.csv_cell(text), "'" + text)
@@ -285,9 +334,9 @@ class InProcess(unittest.TestCase):
         fail = subprocess.CalledProcessError(1, ["chrome"])
         with mock.patch.object(render, "find_chrome", return_value="/bin/chrome"), \
                 mock.patch.object(render.subprocess, "run", side_effect=fail), \
-                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                mock.patch("sys.stderr", new_callable=io.StringIO) as err:
             plan, files = render.render(d, OWNERS)
-        self.assertIn("WARN: Chrome could not print the PDF", out.getvalue())
+        self.assertIn("WARN: Chrome could not print the PDF", err.getvalue())
         self.assertFalse((d / "report.pdf").exists())
         self.assertNotIn(d / "report.pdf", files)
         self.assertTrue((d / "report.html").is_file())

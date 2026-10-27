@@ -104,6 +104,7 @@ tr.row:focus-visible { outline: 2px solid var(--accent-primary); outline-offset:
 tr.row[aria-expanded="true"] .toggle { transform: rotate(90deg); }
 tr.detail { display: none; }
 tr.detail.open { display: table-row; }
+.print-detail, .print-only { display: none; }
 tr.detail > td { background: rgba(255, 255, 255, 0.025); padding: 4px 16px 18px 28px; border-bottom: 1px solid var(--bg-tertiary); }
 td.asset { min-width: 150px; }
 td.reason { min-width: 140px; }
@@ -236,6 +237,14 @@ table.evidence td { padding: 5px 8px; }
   .detail-body h4 { break-after: avoid; }
   tr.row { break-inside: avoid; break-after: avoid; }
   tr.detail { display: table-row; }
+  /* Spec: the ranked table first, then the per-asset detail; Verify first stays expanded. */
+  .block.plan tr.detail, .screen-only { display: none; }
+  .print-only { display: inline; }
+  td.reason { width: 12%; }
+  .print-detail { display: block; break-before: page; margin-top: 0; }
+  .print-item { margin-top: 10pt; padding-top: 6pt; border-top: 1pt solid #1E2426; }
+  .print-item:first-of-type { margin-top: 4pt; }
+  .detail-head { font-size: 9.5pt; font-weight: 500; color: #1E2426; margin: 0; break-after: avoid; }
   tr.detail > td { background: #fafafa; padding: 2pt 8pt 8pt 16pt; border-bottom: 0.75pt solid rgba(30, 36, 38, 0.3); }
   .toggle { display: none; }
   .sub, .muted, .empty { color: rgba(30, 36, 38, 0.55); }
@@ -315,7 +324,7 @@ table.evidence td { padding: 5px 8px; }
 
   <section class="block plan" id="plan">
     <h2>Action plan</h2>
-    <p class="intro">Confirmed-vulnerable hosts in rank order: internet-facing first, then attack path, Asset Criticality Rating and Asset Exposure Score. Select a row for every PHP install, its evidence and how to verify the fix.</p>
+    <p class="intro">Confirmed-vulnerable hosts in rank order: internet-facing first, then attack path, Asset Criticality Rating and Asset Exposure Score. <span class="screen-only">Select a row for every PHP install, its evidence and how to verify the fix.</span><span class="print-only">Every PHP install, its evidence and how to verify the fix follow the table, in rank order.</span></p>
     <div class="table-wrap">
       <table class="cards">
         <thead><tr><th>Rank</th><th>Bucket</th><th>Asset</th><th>Owner</th><th>Action</th><th>Fix target</th><th>Reason</th><th>Flags</th><th>Credentials</th><th>ACR / AES / Attack path</th></tr></thead>
@@ -323,6 +332,8 @@ table.evidence td { padding: 5px 8px; }
       </table>
     </div>
   </section>
+
+  $plan_details
 
   <section class="block verify" id="verify">
     <h2>Verify first</h2>
