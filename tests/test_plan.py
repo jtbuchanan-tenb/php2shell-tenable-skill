@@ -299,6 +299,17 @@ class Content(unittest.TestCase):
 
 
 class Verify(unittest.TestCase):
+    def test_next_step_feed_failed_with_known_package(self):
+        def fail(files):
+            for e in files["advisories/index.json"]:
+                if "UBUNTU" in e["url"]:
+                    e.update(status="failed", file=None, error="HTTP 429")
+        plan, res = built(fail)
+        entry = by_key(plan, "verify_first")["a-ubuntu-ok"]
+        self.assertEqual(entry["php_installs"][0]["verdict"], "unverified-no-data")
+        self.assertEqual(entry["next_step"],
+                         "Re-run fetch_advisories.py, then re-render with render.py")
+
     def test_next_step_unpatched_scan_hint(self):
         def edit(files):  # a-ol8 without credentials is unverified
             set_asset(files, "a-ol8", auth_plugins=[], unpatched_scan=False)

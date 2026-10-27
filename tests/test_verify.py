@@ -491,6 +491,45 @@ class ThirdPartyRepos(unittest.TestCase):
         self.assertIn("php-cli-8.0.30-3.el9_6", v.fix_target)
 
 
+class NoFeedFamilies(unittest.TestCase):
+    """R43: rule 6 also covers a known package on a family with no feed the skill reads."""
+
+    def test_oracle_known_package_is_likely_patched(self):
+        def edit(files):
+            one_install(files, "a-ol8", "Oracle Linux 8.10", "/usr/bin/php", "8.2.35",
+                        "php-cli-8.2.35-1.module+el8.10.0+90000+abcdef12.x86_64")
+        v = verdict_of(edit, "a-ol8")
+        self.assertEqual((v.code, v.rule), ("likely-patched", "6"))
+        self.assertEqual(v.evidence[0].type, "absence")
+        self.assertIn("2026-10-22", v.evidence[0].expected)
+
+    def test_amazon_known_package_is_likely_patched(self):
+        def edit(files):
+            one_install(files, "a-ol8", "Amazon Linux 2023", "/usr/bin/php", "8.3.36",
+                        "php8.3-cli-8.3.36-1.amzn2023.0.1.x86_64")
+            files["plugins.json"].append({
+                "plugin_id": 370900, "name": "Amazon Linux 2023 : php8.3 (ALAS2023-2026-1001)",
+                "family": "Amazon Linux Local Security Checks", "scan_type": "local",
+                "sensor": "nessus", "published": "2026-10-23"})
+        v = verdict_of(edit, "a-ol8")
+        self.assertEqual((v.code, v.rule), ("likely-patched", "6"))
+
+    def test_no_feed_family_still_needs_credentials(self):
+        def edit(files):
+            one_install(files, "a-ol8", "Oracle Linux 8.10", "/usr/bin/php", "8.2.35",
+                        "php-cli-8.2.35-1.module+el8.10.0+90000+abcdef12.x86_64")
+            files["assets.json"]["a-ol8"]["auth_plugins"] = []
+        self.assertEqual(verdict_of(edit, "a-ol8").code, "unverified-credentials")
+
+    def test_feed_family_with_known_package_keeps_rule_8(self):
+        def fail(files):
+            for e in files["advisories/index.json"]:
+                if "UBUNTU" in e["url"]:
+                    e.update(status="failed", file=None, error="HTTP 429")
+        v = verdict_of(fail, "a-ubuntu-ok")
+        self.assertEqual((v.code, v.rule), ("unverified-no-data", "8"))
+
+
 class NeverPatchedGuards(unittest.TestCase):
     """Invariant 1: no Patched without positive, same-channel evidence."""
 

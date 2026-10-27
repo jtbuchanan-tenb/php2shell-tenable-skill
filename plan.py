@@ -15,8 +15,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
-from verify import (ACTIONABLE, DEFAULT_CVES, DEFAULT_FIXED, FAILURE_IDS, FAQ_URL, VERDICTS,
-                    VERIFY_FIRST, _key, _s)
+from verify import (ACTIONABLE, DEFAULT_CVES, DEFAULT_FIXED, FAILURE_IDS, FAQ_URL, FEED_FAILED,
+                    PACKAGE_UNKNOWN, VERDICTS, VERIFY_FIRST, _key, _s)
 
 SKILL_VERSION = "2.0.0"
 SCHEMA_VERSION = "1.0"
@@ -238,6 +238,18 @@ def verification(result) -> dict:
     return {"rescan": True, "plugins_should_stop": _plugin_ids(result)}
 
 
+def _feed_failed(result) -> bool:
+    """A credentialed host with a known package left unverified because a feed fetch failed."""
+    if result.credential_state != "credentialed":
+        return False
+    for inst, v in result.installs:
+        notes = " ".join(e.observed for e in v.evidence if e.type == "absence")
+        if (v.code == "unverified-no-data" and inst.package and FEED_FAILED in notes
+                and PACKAGE_UNKNOWN not in notes):
+            return True
+    return False
+
+
 def next_step(result) -> str:
     codes = {v.code for _, v in result.installs}
     if "unverified-credentials" in codes:
@@ -249,6 +261,8 @@ def next_step(result) -> str:
         text = "Resolve conflicting evidence"
     elif "likely-patched" in codes:
         text = "Rescan with credentials after the next plugin update to confirm"
+    elif _feed_failed(result):
+        text = "Re-run fetch_advisories.py, then re-render with render.py"
     else:
         text = "Rescan with credentials to verify"
     if result.asset.get("unpatched_scan") is False:

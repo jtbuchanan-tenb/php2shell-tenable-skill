@@ -100,11 +100,11 @@ Each PHP install gets one of these verdicts:
 | Vulnerable – backport only | PHP 7.4–8.1. No official release; fixes come only as source or vendor backports. |
 | Vulnerable – EOL | PHP 5.4–7.3. End of life, and the PHP project will not ship a fix. |
 | Patched | Positive evidence of the fix: a version at or above the fixed release, or a vendor package at or above the vendor fix. |
-| Likely patched – Tenable distro check clean | Tenable's distro plugins don't fire, but no vendor feed confirms the fix. Listed under Verify first, never shown as Patched. |
+| Likely patched – Tenable distro check clean | Tenable's distro plugins don't fire, and the plugin for this release was published before the host's last scan, but no vendor feed confirms the fix (on Oracle Linux, Amazon Linux, CentOS and Fedora, or when the package version is unknown). Listed under Verify first, never shown as Patched. |
 | Not affected | Below PHP 5.4. |
 | Conflict – verify | Two positive sources disagree. |
 | Unverified – credentials | The host wasn't scanned with working credentials. |
-| Unverified – no package data | Tenable reports PHP but no package or version data. |
+| Unverified – no package data | The data the skill read can't settle the install: no package or version, no vendor feed record for the package, or a feed that failed to download. The next step says which. |
 
 A feed that fails to download is never read as a fix.
 
@@ -133,7 +133,7 @@ python3 ~/.claude/skills/php2shell-tenable/render.py <run folder> [--owners <own
 
 - **Credentials.** Hosts scanned without working credentials can't be verified; rescan with credentials.
 - **Output length.** Tenable's plugin output for a host can be cut at about 500 characters, so hosts with three or more PHP installs may show only the first ones; the report flags these.
-- **Amazon Linux.** Amazon Linux has no vendor feed the skill reads; those hosts rely on Tenable's plugins.
+- **Oracle Linux, Amazon Linux, CentOS and Fedora.** The skill reads no vendor feed for these; their hosts rely on Tenable's plugins and can reach Likely patched, not Patched.
 - **Vendor data.** Vendor data can be wrong; vendor "not affected" claims are recorded, not trusted alone.
 - **Unpatched-vulnerability scanning.** Turn on Scan for Unpatched Vulnerabilities in the scan policy so Tenable can report packages with no vendor fix. The report shows the setting per host.
 - **Web App Scanning results need a scan after 21 October 2026.** The WAS plugins were published that day, so an earlier scan cannot report them.

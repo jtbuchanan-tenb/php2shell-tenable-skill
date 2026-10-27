@@ -64,6 +64,11 @@ _OSV_PREFIX = {"ubuntu": "UBUNTU-", "debian": "DEBIAN-"}
 _UPSTREAM_AFFECTED = {"vulnerable", "backport-only", "eol"}
 # Families whose PHP can come from a module stream: rule 6 needs the stream known.
 _MODULE_FAMILIES = {"rhel", "oracle", "alma", "rocky", "centos"}
+# Families with no vendor feed the skill reads: rule 6 applies with a known package too.
+NO_FEED_FAMILIES = {"oracle", "amazon", "centos", "fedora"}
+# Rule 8 evidence wording, which plan.next_step reads.
+PACKAGE_UNKNOWN = "installed package version unknown"
+FEED_FAILED = "vendor feed fetch failed"
 # Version-only plugins, for rows whose plugin is not in plugins.json.
 _VERSION_ONLY_IDS = {"369483", "115719", "115720", "115721", "115722"}
 
@@ -435,7 +440,8 @@ def _judge(ctx: _Ctx, asset: dict, state: str, slot: _Slot) -> Verdict:
         re.search(r"php:\d+\.\d+", inst.package) or _NEVRA.match(inst.package)))
     pub = _cov(ctx.pub, distro, (stream,)) if stream_known else None
     published_before = bool(pub and last and pub <= last)
-    if distro_pkg and state == "credentialed" and not pkg and published_before:
+    no_feed = bool(distro) and distro.family in NO_FEED_FAMILIES
+    if distro_pkg and state == "credentialed" and (not pkg or no_feed) and published_before:
         return done("likely-patched", "6", [Evidence(
             "absence", "Tenable plugin catalog", where, "",
             "no distro plugin fired; last seen %s" % last, "distro plugin published %s" % pub)])
@@ -443,12 +449,13 @@ def _judge(ctx: _Ctx, asset: dict, state: str, slot: _Slot) -> Verdict:
         return done("unverified-credentials", "7", ev_cred)
 
     if distro_pkg:
-        missing = ["installed package version unknown"] if not pkg else []
+        missing = [PACKAGE_UNKNOWN] if not pkg else []
         if not stream_known:
             missing.append("module stream unknown (no package)")
         missing.append("vendor feed has no same-channel fix for every CVE" if statuses
+                       else "no vendor feed the skill reads for this distro" if no_feed
                        else "no vendor feed record for this package")
-        missing += ["vendor feed fetch failed: %s" % u for u in ctx.failed_feeds(distro)]
+        missing += ["%s: %s" % (FEED_FAILED, u) for u in ctx.failed_feeds(distro)]
         if not published_before:
             missing.append("no Tenable distro plugin published before the last scan")
     elif managed and not windows:

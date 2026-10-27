@@ -101,6 +101,6 @@ State these when they apply; each is something the user can configure or check.
 
 - Hosts scanned without working credentials can't be verified; rescan with credentials.
 - Tenable's plugin output for a host can be cut at about 500 characters, so hosts with three or more PHP installs may show only the first ones; the report flags these.
-- Amazon Linux has no vendor feed the skill reads; those hosts rely on Tenable's plugins.
+- The skill reads no vendor feed for Oracle Linux, Amazon Linux, CentOS or Fedora; those hosts rely on Tenable's plugins and can reach Likely patched, not Patched.
 - Vendor data can be wrong; vendor "not affected" claims are recorded, not trusted alone.
 - Turn on Scan for Unpatched Vulnerabilities in the scan policy so Tenable can report packages with no vendor fix.
