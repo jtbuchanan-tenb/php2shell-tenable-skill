@@ -11,6 +11,7 @@ other fetches. Prints one line per index entry; exits 0 even when fetches failed
 """
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import sys
@@ -122,7 +123,7 @@ def fetch(run_dir, opener=urllib.request.urlopen, now=None, sleep=time.sleep) ->
             entry["status"], entry["file"] = "ok", fname
         except urllib.error.HTTPError as e:
             entry["error"] = "HTTP %d" % e.code
-        except (urllib.error.URLError, OSError) as e:  # timeouts are OSError
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as e:  # timeouts are OSError
             entry["error"] = "%s: %s" % (type(e).__name__, e)
         except ValueError as e:
             entry["error"] = "response is not valid JSON: %s" % e

@@ -1,3 +1,4 @@
+import http.client
 import io
 import json
 import tempfile
@@ -105,6 +106,30 @@ class FetchTests(unittest.TestCase):
         self.assertEqual([x for x in idx if x["url"] == url][0]["status"], "failed")
         self.assertEqual(op.calls.count(url), 1)
         self.assertEqual(self.sleeps, [])
+
+    def test_incomplete_read_is_failed(self):
+        url = "https://security.access.redhat.com/data/csaf/v2/vex/2026/cve-2026-109618.json"
+        bad = _Resp(b"")
+        def boom():
+            raise http.client.IncompleteRead(b"{", 100)
+        bad.read = boom
+        op = FakeOpener()
+        orig = op.__call__.__func__
+        op.responses[url] = b"{}"
+        class Op(FakeOpener):
+            def __call__(inner, req, timeout=None):
+                if req.full_url == url:
+                    inner.calls.append(url)
+                    return bad
+                return orig(inner, req, timeout)
+        op = Op()
+        idx = self.fetch(op)
+        e = [x for x in idx if x["url"] == url][0]
+        self.assertEqual(e["status"], "failed")
+        self.assertIn("IncompleteRead", e["error"])
+        self.assertIsNone(e["file"])
+        self.assertTrue(any(x["status"] == "ok" for x in idx))
+        self.assertTrue((self.run_dir / "advisories" / "index.json").exists())
 
     def test_timeout_is_failed(self):
         url = "https://api.osv.dev/v1/vulns/DEBIAN-" + CVES[1]
