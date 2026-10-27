@@ -118,6 +118,30 @@ def owner_for(result, owners: Owners) -> tuple:
 
 # --- classification ---
 
+def _asset_id(result) -> str:
+    """The Tenable asset ID, or "" when the key is a name|ip or URL stand-in."""
+    key = result.key
+    return "" if "|" in key or key.lower().startswith(("http://", "https://")) else key
+
+
+def _analyzer_target(result) -> str:
+    """What to name in "analyze auth failures on ...": asset ID, else hostname, else IP."""
+    a = result.asset
+    return _asset_id(result) or _s(a.get("name")) or next(iter(a.get("ips") or []), "")
+
+
+def _score(value):
+    """A number, or None for anything else (such as "N/A"); never estimated."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def _apa(value):
+    v = _s(value).lower()
+    return v if v in _ACTIVITY else None
+
+
 def _is_was(result) -> bool:
     return any(s.upper() == "WAS" for s in result.sources) or bool(result.urls)
 
@@ -176,10 +200,10 @@ def reason(result) -> str:
         parts = ["internet-facing (%s)" % ("WAS" if _is_was(result) else "public IP")]
     else:
         parts = ["internal" if serves_web(result) else "internal, no sign PHP serves web requests"]
-    if a.get("apa_level") in _ACTIVITY:
-        parts.append("%s attack path" % a["apa_level"])
-    if a.get("acr") is not None:
-        parts.append("ACR " + _num(a["acr"]))
+    if _apa(a.get("apa_level")):
+        parts.append("%s attack path" % _apa(a.get("apa_level")))
+    if _score(a.get("acr")) is not None:
+        parts.append("ACR " + _num(_score(a.get("acr"))))
     return ", ".join(parts)
 
 
@@ -187,7 +211,8 @@ def _sort_key(result):
     a = result.asset
     def score(v):
         return (v is None, -(v or 0))
-    return (_ACTIVITY.get(a.get("apa_level"), 2), score(a.get("acr")), score(a.get("aes")),
+    return (_ACTIVITY.get(_apa(a.get("apa_level")), 2), score(_score(a.get("acr"))),
+            score(_score(a.get("aes"))),
             _s(a.get("name")).lower(), result.key)
 
 
@@ -215,7 +240,8 @@ def verification(result) -> dict:
 def next_step(result) -> str:
     codes = {v.code for _, v in result.installs}
     if "unverified-credentials" in codes:
-        text = ("Run Auth Failure Analyzer: analyze auth failures on " + result.key
+        text = ("Run Auth Failure Analyzer: analyze auth failures on "
+                + _analyzer_target(result)
                 if result.credential_state == "failed"
                 else "Configure credentialed scans and rescan")
     elif "conflict" in codes:
@@ -306,7 +332,7 @@ def _entry(result, owners, rows, mitigations, since, generated_at) -> dict:
     compromise = web and actionable
     siblings = [i for i, _ in result.installs]
     return {
-        "asset_id": "" if result.key.lower().startswith(("http://", "https://")) else result.key,
+        "key": result.key, "asset_id": _asset_id(result),
         "hostname": _s(a.get("name")),
         "fqdn": next(iter(a.get("fqdns") or []), ""),
         "ip": next(iter(a.get("ips") or []), ""),
@@ -324,8 +350,8 @@ def _entry(result, owners, rows, mitigations, since, generated_at) -> dict:
                   "unpatched_scan": a.get("unpatched_scan")},
         "interim_mitigations": list(mitigations),
         "verification": verification(result),
-        "context": {"aes": a.get("aes"), "acr": a.get("acr"),
-                    "apa_level": a.get("apa_level"), "last_seen": _s(a.get("last_seen"))},
+        "context": {"aes": _score(a.get("aes")), "acr": _score(a.get("acr")),
+                    "apa_level": _apa(a.get("apa_level")), "last_seen": _s(a.get("last_seen"))},
     }
 
 
@@ -385,12 +411,13 @@ def auth_followup(results) -> str:
     for pid in sorted(groups):
         hosts = groups[pid]
         lines.append("Plugin %d, %d host%s. Example: analyze auth failures on %s"
-                     % (pid, len(hosts), "" if len(hosts) == 1 else "s", hosts[0].key))
+                     % (pid, len(hosts), "" if len(hosts) == 1 else "s",
+                      _analyzer_target(hosts[0])))
     if groups:
         lines.append("")
     for pid in sorted(groups):
         for r in groups[pid]:
             a = r.asset
-            lines.append("\t".join([r.key, _s(a.get("name")),
+            lines.append("\t".join([_asset_id(r), _s(a.get("name")),
                                     next(iter(a.get("ips") or []), ""), str(pid)]))
     return "\n".join(lines) + "\n"

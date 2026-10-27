@@ -223,6 +223,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
+          "key",
           "asset_id",
           "hostname",
           "fqdn",
@@ -243,9 +244,13 @@
           "context"
         ],
         "properties": {
+          "key": {
+            "type": "string",
+            "description": "The plan's identity for the asset: Tenable asset ID, else name|ip, else URL. Unique within a plan."
+          },
           "asset_id": {
             "type": "string",
-            "description": "Tenable asset ID, else name|ip, else empty for a web application URL asset."
+            "description": "Tenable asset ID; empty when the asset has none (use key, hostname or ip)."
           },
           "hostname": {
             "type": "string"
@@ -328,6 +333,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
+          "key",
           "asset_id",
           "hostname",
           "fqdn",
@@ -349,9 +355,13 @@
           "next_step"
         ],
         "properties": {
+          "key": {
+            "type": "string",
+            "description": "The plan's identity for the asset: Tenable asset ID, else name|ip, else URL. Unique within a plan."
+          },
           "asset_id": {
             "type": "string",
-            "description": "Tenable asset ID, else name|ip, else empty for a web application URL asset."
+            "description": "Tenable asset ID; empty when the asset has none (use key, hostname or ip)."
           },
           "hostname": {
             "type": "string"

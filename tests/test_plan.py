@@ -338,6 +338,43 @@ class Verify(unittest.TestCase):
         self.assertNotIn("141118", text)
 
 
+class Robustness(unittest.TestCase):
+    def test_idless_failed_host_never_gets_a_synthetic_asset_id(self):
+        def edit(files):
+            for r in files["findings.json"]:
+                if r["asset_id"] == "a-authfail":
+                    r["asset_id"] = ""
+            files["assets.json"]["app04|10.0.1.16"] = files["assets.json"].pop("a-authfail")
+        plan, res = built(edit)
+        entry = next(v for v in plan["verify_first"] if v["key"] == "app04|10.0.1.16")
+        self.assertEqual(entry["asset_id"], "")
+        self.assertEqual(entry["next_step"],
+                         "Run Auth Failure Analyzer: analyze auth failures on app04")
+        text = auth_followup(list(res.values()))
+        self.assertIn("analyze auth failures on app04", text)
+        self.assertIn("\tapp04\t10.0.1.16\t104410", text)
+        self.assertNotIn("|", text)
+        self.assertEqual(validate(plan, SCHEMA), [])
+        self.assertEqual(by_key(plan)["a-rhel9"]["key"], "a-rhel9")
+
+    def test_out_of_contract_scores_still_build_a_valid_plan(self):
+        def edit(files):
+            set_asset(files, "a-rhel9", acr="N/A", aes="N/A", apa_level="medium")
+            set_asset(files, "a-trunc", acr=7, aes=700, apa_level="HIGH")
+            set_asset(files, "a-win", acr=None, aes=None, apa_level=None)
+            set_asset(files, "a-ol8", acr=5, aes=5, apa_level=None)
+            set_asset(files, "a-image", acr=5, aes=9, apa_level=None)
+        plan, _ = built(edit)
+        self.assertEqual(validate(plan, SCHEMA), [])
+        items = by_key(plan)
+        ctx = items["a-rhel9"]["context"]
+        self.assertEqual((ctx["acr"], ctx["aes"], ctx["apa_level"]), (None, None, None))
+        self.assertEqual(items["a-trunc"]["context"]["apa_level"], "high")
+        nxt = [i["asset_id"] for i in plan["items"] if i["bucket"] == "NEXT"]
+        self.assertEqual(nxt, ["a-trunc", "a-image", "a-ol8", "a-rhel9", "a-win"])
+        self.assertEqual(items["a-rhel9"]["reason"], "internal")
+
+
 class Schema(unittest.TestCase):
     def test_plan_schema(self):
         plan, _ = built(owners=OWNERS)
