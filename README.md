@@ -8,8 +8,8 @@ The plugin IDs, fixed versions and mitigations come from Tenable Research's [PHP
 
 1. Checks that the Tenable Hexa AI MCP tools are loaded. If they are missing, it prints the setup command and stops.
 2. Re-reads the Tenable Research FAQ for the current CVE list, fixed releases and mitigations, then asks Tenable's plugin database for every plugin covering those CVEs (`faq.json`, `plugins.json`). That picks up Nessus and cloud or container plugins as Tenable publishes them.
-3. Finds vulnerable findings by CVE, and reads PHP inventory and plugin output from the detection plugins (48243, 58987, 200476 and 216936).
-4. Adds context for each asset: whether it was scanned with working credentials, whether it serves HTTP, its AES and ACR, whether it is on an attack path, its operating system and its owner (`findings.json`, `assets.json`).
+3. Finds vulnerable findings by CVE, and reads PHP inventory and plugin output from the detection plugins (48243, 58987, 200476 and 216936). `source` comes from repeating the CVE query per product, and the CVE list is the PHP2Shell CVEs only.
+4. Adds context for each asset: whether it was scanned with working credentials, whether it serves HTTP, whether Scan for Unpatched Vulnerabilities was on (read from plugin 19506 for the host's scan run), its AES and ACR, whether it is on an attack path, its operating system and its owner (`findings.json`, `assets.json`).
 5. Downloads public vendor advisories with `fetch_advisories.py`.
 6. Runs `render.py`, which verifies each install, ranks the hosts and writes the plan and reports.
 7. Summarizes the run in the chat: the credential picture first, counts per bucket, the top items with owner and action, and what needs verifying.
@@ -50,7 +50,7 @@ A run takes a few minutes. Most of that is Hexa calls, and the skill backs off i
 
 ### Owner file
 
-To put an owner against every host, give the skill a CSV from your CMDB or a spreadsheet. The first run asks for it and remembers the path in `~/Dev/php2shell-reports/config.json`.
+To put an owner against every host, give the skill a CSV from your CMDB or a spreadsheet. The first run asks for it and remembers the path in `~/Dev/php2shell-reports/config.json` (keys `owner_file` and `owner_tag_category`).
 
 ```csv
 hostname,owner
