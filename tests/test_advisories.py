@@ -1,3 +1,4 @@
+import ast
 import json
 import shutil
 import tempfile
@@ -207,6 +208,23 @@ class Sources(unittest.TestCase):
             shutil.rmtree(d)
         self.assertEqual((adv.sources(), adv.failed_sources()), ([], []))
         self.assertEqual(adv.lookup(RHEL9, "php-cli-8.0.30-3.el9_6.x86_64", "base", CVE), [])
+
+
+class Encoding(unittest.TestCase):
+    def test_every_text_read_and_write_names_utf8(self):
+        """Every read_text, write_text and text-mode open in the scripts names an encoding."""
+        root = Path(__file__).parent.parent
+        missing = []
+        for path in sorted(root.glob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not isinstance(node, ast.Call):
+                    continue
+                name = getattr(node.func, "attr", getattr(node.func, "id", ""))
+                mode = next((a.value for a in node.args[1:2] if isinstance(a, ast.Constant)), "r")
+                if name in ("read_text", "write_text") or (name == "open" and "b" not in mode):
+                    if not any(k.arg == "encoding" for k in node.keywords):
+                        missing.append("%s:%d %s" % (path.name, node.lineno, name))
+        self.assertEqual(missing, [])
 
 
 if __name__ == "__main__":

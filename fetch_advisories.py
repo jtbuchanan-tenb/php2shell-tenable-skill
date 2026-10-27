@@ -39,7 +39,7 @@ _ADVISORY = re.compile(r"\(((?:ALSA|RLSA)-\d{4}:[A-Za-z0-9]+|SUSE-SU-\d{4}:\d+-\
 
 def _load(run_dir: Path, name: str, empty):
     try:
-        return json.loads((run_dir / name).read_text())
+        return json.loads((run_dir / name).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return empty
 
@@ -133,7 +133,7 @@ def fetch(run_dir, opener=urllib.request.urlopen, now=None, sleep=time.sleep) ->
         index.append({"source": "alpine", "cve": "", "url": "",
                       "fetched_at": clock().isoformat(), "status": "skipped",
                       "file": None, "error": None})
-    (out / "index.json").write_text(json.dumps(index, indent=2) + "\n")
+    (out / "index.json").write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
     return index
 
 

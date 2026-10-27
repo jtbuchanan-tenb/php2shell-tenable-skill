@@ -287,7 +287,7 @@ class Advisories:
     def load(cls, run_dir) -> "Advisories":
         adv_dir = Path(run_dir) / "advisories"
         try:
-            index = json.loads((adv_dir / "index.json").read_text())
+            index = json.loads((adv_dir / "index.json").read_text(encoding="utf-8"))
         except FileNotFoundError:
             return cls([], [])
         except (OSError, ValueError) as e:
@@ -312,7 +312,7 @@ class Advisories:
                 e["status"], e["error"] = "failed", "saved file not usable: %r" % fname
                 continue
             try:
-                doc = json.loads((adv_dir / fname).read_text())
+                doc = json.loads((adv_dir / fname).read_text(encoding="utf-8"))
                 candidates.extend(builder(doc, dict(e, file=fname)))
             except (OSError, ValueError) as err:
                 e["status"], e["error"] = "failed", "saved file unreadable: %s" % err
