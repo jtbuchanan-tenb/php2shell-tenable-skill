@@ -300,7 +300,7 @@
           },
           "fix_target": {
             "type": "string",
-            "description": "Package version plus advisory ID, or an upstream release; may be empty."
+            "description": "Package version plus advisory ID, an upstream release, or the CVE IDs when a Cloud finding names no advisory; may be empty."
           },
           "php_installs": {
             "type": "array",
