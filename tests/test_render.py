@@ -297,6 +297,43 @@ class InProcess(unittest.TestCase):
                          "0 have no named owner."):
             self.assertIn(sentence, text)
 
+    def test_unpatched_scan_note(self):
+        note = "Scan for Unpatched Vulnerabilities was off for %d PHP %s. Turn it on in the " \
+               "scan policy so Tenable can report packages with no vendor fix."
+
+        def banner(**flags):
+            def edit(files):
+                for a in files["assets.json"].values():
+                    a["unpatched_scan"] = None
+                for k, v in flags.items():
+                    files["assets.json"][k]["unpatched_scan"] = v
+            d, plan, _ = self.render(edit)
+            return render.banner(plan), (d / "report.html").read_text(encoding="utf-8")
+
+        text, doc = banner(**{"a-rhel9": False})
+        self.assertIn(note % (1, "host"), text)
+        self.assertIn(note % (1, "host"), doc)
+        self.assertNotIn("(s)", text)
+        text, _ = banner(**{"a-rhel9": False, "a-ol8": False})
+        self.assertIn(note % (2, "hosts"), text)
+        text, _ = banner(**{"a-rhel9": False, "a-nocreds": False})  # verify_first counts too
+        self.assertIn(note % (2, "hosts"), text)
+        for flags in ({}, {"a-rhel9": None, "a-ol8": True}):
+            text, doc = banner(**flags)
+            self.assertNotIn("Scan for Unpatched Vulnerabilities was off", text)
+            self.assertNotIn("Scan for Unpatched Vulnerabilities was off", doc)
+
+    def test_vendor_update_copy_for_cloud_only_items(self):
+        _, plan, _ = self.render()
+        by = {e["asset_id"]: e for e in entries(plan)}
+        self.assertEqual(
+            render.action_text(by["a-image"]),
+            "Install the vendor update or rebuild the image from a patched base (%s)"
+            % by["a-image"]["fix_target"])
+        self.assertTrue(by["a-image"]["fix_target"].startswith("CVE-"))
+        text = render.action_text(by["a-rhel9"])
+        self.assertEqual(text, "Install the vendor update (%s)" % by["a-rhel9"]["fix_target"])
+
     def test_formula_guard(self):
         for text in ("=1+1", "+1", "-1", "@SUM(A1)"):
             self.assertEqual(render.csv_cell(text), "'" + text)

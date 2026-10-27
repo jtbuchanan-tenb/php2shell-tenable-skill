@@ -91,6 +91,13 @@ def _num(value) -> str:
     return str(value) if isinstance(value, int) else "%g" % value
 
 
+def _cloud_only(e: dict) -> bool:
+    """True when every Tenable plugin finding behind the item came from Cloud."""
+    src = [x["source"] for i in e.get("php_installs") or [] for x in i.get("evidence") or []
+           if x.get("type") == "tenable-plugin"]
+    return bool(src) and all(s == "Tenable Cloud" for s in src)
+
+
 def action_text(e: dict) -> str:
     action, target = e.get("action"), e.get("fix_target") or ""
     if action == "upgrade-stream":
@@ -100,6 +107,9 @@ def action_text(e: dict) -> str:
         return ("Take it offline until upgraded" if e["flags"]["internet_facing"]
                 else "Isolate or upgrade")
     if action == "vendor-update":
+        if target and _cloud_only(e):
+            return ("Install the vendor update or rebuild the image from a patched base (%s)"
+                    % target)
         return "Install the vendor update (%s)" % target if target else "Install the vendor update"
     if action == "patch":
         return "Upgrade PHP to %s" % (target or "a fixed release")
@@ -293,6 +303,11 @@ def banner(plan: dict) -> str:
                      "status can't be verified. Configure credentialed scans and rescan."
                      % (bad, n["credential_scope"], "wasn't" if bad == 1 else "weren't",
                         "its" if bad == 1 else "their"))
+    off = sum((e.get("flags") or {}).get("unpatched_scan") is False for e in plan["items"] + plan["verify_first"])
+    if off:
+        lines.append("Scan for Unpatched Vulnerabilities was off for %d PHP %s. Turn it on in the "
+                     "scan policy so Tenable can report packages with no vendor fix."
+                     % (off, "host" if off == 1 else "hosts"))
     lines.append("%d %s action." % (k, "host needs" if k == 1 else "hosts need"))
     lines.append("%d %s no named owner." % (u, "has" if u == 1 else "have"))
     return "".join("<p>%s</p>" % line for line in lines)

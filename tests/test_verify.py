@@ -105,7 +105,9 @@ class Table(Fixture):
             self.assertEqual(v.evidence[0].reference_id, "370210")
             feed = first_ev(v, "vendor-feed")
             self.assertEqual((feed.source, feed.reference_id, feed.observed, feed.expected),
-                             ("redhat", "RHSA-2026:88720", "8.0.30-3.el9_6", "8.0.30-3.el9_6.2"))
+                             ("redhat", "RHSA-2026:88720 (CVE-2026-109618)", "8.0.30-3.el9_6",
+                              "8.0.30-3.el9_6.2"))
+            self.assertEqual(refs(v, "vendor-feed"), ["RHSA-2026:88720 (CVE-2026-109618)"])
             self.assertEqual(feed.url, "https://access.redhat.com/errata/RHSA-2026:88720")
             self.assertEqual(feed.fetched_at, "2026-10-27T15:26:16+00:00")
 
@@ -124,7 +126,10 @@ class Table(Fixture):
         self.assertEqual(len(feeds), 2)  # one per run CVE
         for e in feeds:
             self.assertEqual((e.source, e.reference_id, e.observed, e.expected),
-                             ("osv", "USN-8948-1", "8.1.2-1ubuntu2.28", "8.1.2-1ubuntu2.28"))
+                             ("osv", "USN-8948-1 (%s)" % e.reference_id.split("(")[1][:-1],
+                              "8.1.2-1ubuntu2.28", "8.1.2-1ubuntu2.28"))
+        self.assertEqual(sorted(e.reference_id for e in feeds),
+                         ["USN-8948-1 (CVE-2026-109618)", "USN-8948-1 (CVE-2026-109619)"])
         self.assertEqual(refs(v, "tenable-plugin"), [])
 
     def test_a_ubuntu_conflict(self):
@@ -194,6 +199,16 @@ class Table(Fixture):
         self.assertEqual(r.installs[0][0].version, "8.3.30")
         self.assertEqual((v.code, v.rule, v.action), ("vulnerable", "1", "vendor-update"))
         self.assertEqual(v.evidence[0].reference_id, "CVE-2026-109618")
+        self.assertEqual(v.fix_target, "CVE-2026-109618")
+
+    def test_cloud_rule1_names_every_cve_in_the_finding(self):
+        def edit(files):
+            for row in files["findings.json"]:
+                if row["asset_id"] == "a-image":
+                    row["cves"] = ["CVE-2026-109618", "CVE-2026-109619"]
+        v = results(edit)["a-image"].installs[0][1]
+        self.assertEqual((v.code, v.action, v.fix_target),
+                         ("vulnerable", "vendor-update", "CVE-2026-109618, CVE-2026-109619"))
 
     def test_a_trunc(self):
         r = self.r["a-trunc"]

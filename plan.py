@@ -199,7 +199,8 @@ def reason(result) -> str:
     if internet_facing(result):
         parts = ["internet-facing (%s)" % ("WAS" if _is_was(result) else "public IP")]
     else:
-        parts = ["internal" if serves_web(result) else "internal, no sign PHP serves web requests"]
+        where = "internal" if result.asset.get("ips") else "no public IP recorded"
+        parts = [where if serves_web(result) else where + ", no sign PHP serves web requests"]
     if _apa(a.get("apa_level")):
         parts.append("%s attack path" % _apa(a.get("apa_level")))
     if _score(a.get("acr")) is not None:

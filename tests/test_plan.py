@@ -375,6 +375,27 @@ class Robustness(unittest.TestCase):
         self.assertEqual(items["a-rhel9"]["reason"], "internal")
 
 
+class ReasonWhere(unittest.TestCase):
+    def test_no_ip_says_no_public_ip_recorded(self):
+        plan, _ = built()
+        items = by_key(plan)
+        self.assertEqual(items["a-image"]["flags"]["internet_facing"], False)
+        self.assertTrue(items["a-image"]["reason"].startswith("no public IP recorded"))
+        self.assertNotIn("internal", items["a-image"]["reason"])
+        self.assertEqual(items["a-image"]["bucket"], "NEXT")
+
+    def test_private_ip_stays_internal(self):
+        plan, _ = built()
+        self.assertTrue(by_key(plan)["a-rhel9"]["reason"].startswith("internal"))
+
+    def test_no_ip_and_no_web_sign(self):
+        def edit(files):
+            set_asset(files, "a-image", http_service=False)
+        plan, _ = built(edit)
+        reason = by_key(plan)["a-image"]["reason"]
+        self.assertTrue(reason.startswith("no public IP recorded"), reason)
+
+
 class Schema(unittest.TestCase):
     def test_plan_schema(self):
         plan, _ = built(owners=OWNERS)

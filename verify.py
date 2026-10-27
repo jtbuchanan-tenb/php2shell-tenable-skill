@@ -199,7 +199,9 @@ def _cred_ev(asset: dict, state: str) -> Evidence:
 
 
 def _feed_ev(rec, installed: str) -> Evidence:
-    return Evidence("vendor-feed", rec.source, rec.advisory_id or rec.cve, rec.url, installed,
+    ref = "%s (%s)" % (rec.advisory_id, rec.cve) if rec.advisory_id and rec.cve else (
+        rec.advisory_id or rec.cve)
+    return Evidence("vendor-feed", rec.source, ref, rec.url, installed,
                     rec.fixed_version or rec.status, rec.fetched_at)
 
 
@@ -375,8 +377,12 @@ def _judge(ctx: _Ctx, asset: dict, state: str, slot: _Slot) -> Verdict:
             return done("conflict", rule, first + ev_feed)
         if vendor:
             ids = [a for a in dict.fromkeys(_advisory(r) for r in vendor) if a]
-            return done("vulnerable", rule, first, "vendor-update",
-                        "; ".join(ids + ([r3[1]] if r3 else [])))
+            targets = ids + ([r3[1]] if r3 else [])
+            if not targets:  # Cloud finding: no advisory, so name the CVEs
+                named = [_s(c).upper() for r in vendor for c in r.get("cves") or []]
+                targets = [", ".join(dict.fromkeys(c for c in named if c))]
+                targets = [t for t in targets if t]
+            return done("vulnerable", rule, first, "vendor-update", "; ".join(targets))
         return done("no-vendor-fix", rule, first, "isolate-or-upgrade")
     if r3:
         return done(r3[0], "3", ev_feed, "vendor-update" if r3[1] else "", r3[1])
