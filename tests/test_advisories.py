@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from advisories import Advisories, FixRecord
-from inventory import Distro
+from inventory import Distro, stream_of
 
 FIXTURES = Path(__file__).parent / "fixtures" / "advisories"
 CVE = "CVE-2026-109618"
@@ -14,6 +14,7 @@ RHEL8 = Distro("rhel", "8", None)
 JAMMY = Distro("ubuntu", "22.04", "Ubuntu:22.04:LTS")
 ALPINE = Distro("alpine", "3.22", "Alpine:v3.22")
 ALMA8 = Distro("alma", "8", "AlmaLinux:8")
+ALMA9 = Distro("alma", "9", "AlmaLinux:9")
 
 
 def run_dir(edit_index=None) -> Path:
@@ -121,11 +122,27 @@ class Osv(Base):
 
     def test_osv_alma_module_cve_in_related(self):
         pkg = "php-cli-8.2.30-1.module_el8.10.0+4000+aaaa1111.x86_64"
-        recs = self.adv.lookup(ALMA8, pkg, "8.2", "CVE-2026-109619")
+        recs = self.adv.lookup(ALMA8, pkg, stream_of(pkg), "CVE-2026-109619")
         self.assertEqual([(r.advisory_id, r.fixed_version, r.package) for r in recs],
                          [("ALSA-2026:87073", "8.2.35-1.module_el8.10.0+4323+fc907035", "php-cli")])
         self.assertEqual(self.adv.lookup(ALMA8, pkg, "7.4", "CVE-2026-109619"), [])
         self.assertEqual(self.adv.lookup(ALMA8, pkg, "base", "CVE-2026-109619"), [])
+
+    def test_osv_alma9_module_install_never_gets_base_fix(self):
+        # ALSA-2026:88720 fixes only the base php; a php:8.2 module install must
+        # not borrow it (8.2.30 > 8.0.30 would read as Patched).
+        module = "php-cli-8.2.30-1.module_el9.6.0+100+abcd1234.x86_64"
+        self.assertEqual(stream_of(module), "8.2")
+        self.assertEqual(self.adv.lookup(ALMA9, module, stream_of(module), CVE), [])
+        self.assertEqual(self.adv.lookup(ALMA9, module, "base", CVE), [])  # stream contradicts package
+        base = "php-cli-8.0.30-1.el9_6.x86_64"
+        recs = self.adv.lookup(ALMA9, base, stream_of(base), CVE)
+        self.assertEqual([(r.advisory_id, r.fixed_version, r.status) for r in recs],
+                         [("ALSA-2026:88720", "8.0.30-3.el9_6", "fixed")])
+
+    def test_stream_argument_must_match_package(self):
+        pkg = "php-cli-8.0.30-3.el9_6.x86_64"
+        self.assertEqual(self.adv.lookup(RHEL9, pkg, "8.0", CVE), [])
 
     def test_osv_not_used_for_rhel(self):
         pkg = "php-cli-8.2.30-1.module+el8.10.0+22000+0badc0de.x86_64"
@@ -169,7 +186,7 @@ class Sources(unittest.TestCase):
             srcs = Advisories.load(d).sources()
         finally:
             shutil.rmtree(d)
-        self.assertEqual(len(srcs), 5)
+        self.assertEqual(len(srcs), 6)
         self.assertEqual(set(srcs[0]), {"source", "cve", "url", "fetched_at", "status", "error"})
 
     def test_unreadable_raw_file_counts_as_failed(self):

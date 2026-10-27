@@ -92,6 +92,11 @@ class StreamOf(unittest.TestCase):
         self.assertEqual(stream_of("php8.1-cli 8.1.2-1ubuntu2.20"), "base")
         self.assertEqual(stream_of(""), "base")
 
+    def test_stream_of_alma_module(self):
+        # AlmaLinux writes module releases with "_" where RHEL and Rocky use "+".
+        self.assertEqual(stream_of("php-cli-8.2.30-1.module_el9.6.0+100+abcd1234.x86_64"), "8.2")
+        self.assertEqual(stream_of("php-cli-8.2.35-1.module_el8.10.0+4323+fc907035.x86_64"), "8.2")
+
 
 def P(pid, name, family, scan_type="local", published="2026-10-22"):
     return {"plugin_id": pid, "name": name, "family": family,

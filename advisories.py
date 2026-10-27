@@ -201,8 +201,8 @@ def _osv(doc: dict, entry: dict) -> list:
             rows = [("affected-no-fix", "")]  # listed as affected, no fixed event
         for st, ver in rows:
             stream = "base"
-            if rpm:  # Alma writes module builds as "module_el8", Rocky as "module+el8"
-                stream = stream_of("%s-%s.noarch" % (name, ver.replace("module_el", "module+el")))
+            if rpm:  # stream_of reads both "module_el8" (Alma) and "module+el8"
+                stream = stream_of("%s-%s.noarch" % (name, ver))
             for cve in cves:
                 out.append(_Candidate(("osv", eco), cve, name, stream, st, ver, "",
                                       advisory, url, "osv", entry["fetched_at"]))
@@ -328,10 +328,11 @@ class Advisories:
         return [dict(e) for e in self._entries if e["status"] == "failed"]
 
     def lookup(self, distro: Distro, package: str, stream: str, cve: str) -> list:
+        """Vendor records for this package; [] when stream disagrees with stream_of(package)."""
         scope = _scope(distro)
         binary, release = _installed(distro, package)
-        if not scope or not binary:
-            return []
+        if not scope or not binary or stream_of(package or "") != stream:
+            return []  # a stream the package itself contradicts is never trusted
         cve = (cve or "").upper()
         cands = [c for c in self._scopes.get(scope, []) if c.cve == cve and c.stream == stream]
         cands = _by_name(cands, binary)

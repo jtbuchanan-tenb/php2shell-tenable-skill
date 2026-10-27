@@ -120,7 +120,7 @@ def stream_of(package: str) -> str:
         return m.group(1)
     if _NEVRA.match(package or ""):
         n = parse_nevra(package)
-        if "module+el" in n.release:
+        if re.search(r"module[+_]el", n.release):  # Alma writes "module_el8"
             v = re.match(r"(\d+\.\d+)", n.version)
             if v:
                 return v.group(1)
