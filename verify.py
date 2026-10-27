@@ -17,8 +17,8 @@ from typing import NamedTuple, Optional
 from urllib.parse import urlparse
 
 from advisories import OTHER_CHANNEL, Advisories
-from inventory import (Distro, Install, classify, coverage, coverage_published, distro_for,
-                       parse_installs, stream_of)
+from inventory import (UNPATCHED_PREFIXES, Distro, Install, classify, coverage,
+                       coverage_published, distro_for, parse_installs, stream_of)
 from versions import compare_apk, compare_dpkg, compare_rpm, parse_nevra
 
 FAQ_URL = ("https://www.tenable.com/blog/php2shell-cve-2026-109618-cve-2026-109619-"
@@ -60,12 +60,18 @@ _FEED = dict.fromkeys(("ubuntu", "debian", "alma", "rocky", "suse"), "osv")
 _FEED.update(rhel="redhat", alpine="alpine")
 _OSV_PREFIX = {"ubuntu": "UBUNTU-", "debian": "DEBIAN-"}
 _UPSTREAM_AFFECTED = {"vulnerable", "backport-only", "eol"}
+# Families whose PHP can come from a module stream: rule 6 needs the stream known.
+_MODULE_FAMILIES = {"rhel", "oracle", "alma", "rocky", "centos"}
+# Version-only plugins, for rows whose plugin is not in plugins.json.
+_VERSION_ONLY_IDS = {"369483", "115719", "115720", "115721", "115722"}
 
 _NEVRA = re.compile(r"^\S+-[^-\s]+-[^-\s]+\.[A-Za-z0-9_]+$")
 _APK = re.compile(r"^(\S+?)-(\d[^-\s]*-r\d+)$")
 _VERSION = re.compile(r"\b(\d+)\.(\d+)(?:\.(\d+))?\b")
 _ADVISORY = re.compile(r"\(([^()]+)\)\s*$")
 _DEBIAN_ADVISORY = re.compile(r"\b(?:dsa|dla)-\d+(?:-\d+)?\b", re.I)
+_VENDOR_NAME = re.compile(r"\b(?:RHSA|ELSA|ALSA|RLSA|USN|DSA|DLA|SUSE-SU|ALAS)[-:\d]"
+                          r"|^[A-Za-z][A-Za-z ]*\d+(?:\.\d+)?\b[^:]*\s:", re.I)
 
 
 class Evidence(NamedTuple):
@@ -228,9 +234,17 @@ class _Ctx:
         src = _s(row.get("source")).upper()
         if src in ("CLOUD", "WAS"):
             return "vendor" if src == "CLOUD" else "version"
-        pid = _s(row.get("plugin_id"))
-        k = classify(self.catalog.get(pid) or {"plugin_id": pid, "name": row.get("plugin_name")})
-        return k if k in ("vendor", "unpatched") else "version"
+        pid, name = _s(row.get("plugin_id")), _s(row.get("plugin_name"))
+        if pid in self.catalog:
+            k = classify(self.catalog[pid])
+            return k if k in ("vendor", "unpatched") else "version"
+        # Not in plugins.json: judge by name; a fired plugin counts as distro-aware
+        # unless it is a known version-only plugin.
+        if name.startswith(UNPATCHED_PREFIXES):
+            return "unpatched"
+        if _VENDOR_NAME.search(name):
+            return "vendor"
+        return "version" if pid in _VERSION_ONLY_IDS else "vendor"
 
     def upstream(self, version: str) -> tuple:
         """(status, target) from the upstream version alone."""
@@ -339,7 +353,7 @@ def _judge(ctx: _Ctx, asset: dict, state: str, slot: _Slot) -> Verdict:
     distro = None if windows else distro_for(os_name, inst.package)
     distro_pkg = bool(managed and distro)  # OS-packaged on a recognised distro
     stream, last = stream_of(inst.package), _s(asset.get("last_seen"))
-    on_os = managed is not False and not windows
+    on_os = managed is not False
     vendor = [r for r in slot.rows if on_os and ctx.kind(r) == "vendor"]
     unpatched = [r for r in slot.rows if on_os and ctx.kind(r) == "unpatched"]
     fired = any(ctx.kind(r) == "version" for r in slot.rows)
@@ -389,7 +403,10 @@ def _judge(ctx: _Ctx, asset: dict, state: str, slot: _Slot) -> Verdict:
     r5 = ctx.rule5(inst.version, fired) if managed is False or windows else None
     if r5:
         return done(r5[0], "5", [ctx.upstream_ev(inst.version, r5[2], r5[0])], r5[1], r5[2])
-    pub = _cov(ctx.pub, distro, (stream,)) if distro_pkg else None
+    # A module-stream family with no package has no known stream, so no rule 6.
+    stream_known = distro_pkg and (distro.family not in _MODULE_FAMILIES or bool(
+        re.search(r"php:\d+\.\d+", inst.package) or _NEVRA.match(inst.package)))
+    pub = _cov(ctx.pub, distro, (stream,)) if stream_known else None
     published_before = bool(pub and last and pub <= last)
     if distro_pkg and state == "credentialed" and not pkg and published_before:
         return done("likely-patched", "6", [Evidence(
@@ -400,6 +417,8 @@ def _judge(ctx: _Ctx, asset: dict, state: str, slot: _Slot) -> Verdict:
 
     if distro_pkg:
         missing = ["installed package version unknown"] if not pkg else []
+        if not stream_known:
+            missing.append("module stream unknown (no package)")
         missing.append("vendor feed has no same-channel fix for every CVE" if statuses
                        else "no vendor feed record for this package")
         missing += ["vendor feed fetch failed: %s" % u for u in ctx.failed_feeds(distro)]
@@ -453,12 +472,16 @@ def _slots(ctx: _Ctx, rows: list) -> tuple:
     if not installs:  # no inventory: one synthetic install per vulnerable row
         installs = [Install("", _s(r.get("php_version")), "", None) for r in vuln]
     slots = [_Slot(i, []) for i in dict.fromkeys(installs)]
-    for r in vuln:
+    for r in sorted(vuln, key=lambda r: ctx.kind(r) == "version"):  # distro-aware rows first
         if ctx.kind(r) == "version":
-            hit = [s for s in slots if s.install.version == _s(r.get("php_version"))]
+            hit = [s for s in slots if s.install.version == _s(r.get("php_version"))] or slots
         else:
             hit = [s for s in slots if s.install.managed_by_os is not False]
-        for s in hit or slots:
+            if not hit:  # only non-OS installs: the distro plugin gets its own install
+                own = Install("", _s(r.get("php_version")), "", None)
+                hit = [_Slot(own, [])]
+                slots.append(hit[0])
+        for s in hit:
             s.rows.append(r)
     return slots, truncated
 

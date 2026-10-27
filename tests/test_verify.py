@@ -22,7 +22,10 @@ def run_dir(edit=None) -> Path:
         files = {n: json.loads((d / n).read_text()) for n in names}
         edit(files)
         for n, data in files.items():
-            (d / n).write_text(json.dumps(data))
+            if data is None:  # None deletes the file
+                (d / n).unlink()
+            else:
+                (d / n).write_text(json.dumps(data))
     return d
 
 
@@ -313,6 +316,72 @@ class Variants(unittest.TestCase):
             files["assets.json"]["a-deb-clean"]["last_seen"] = "2026-10-21"
         v = results(edit)["a-deb-clean"].installs[0][1]
         self.assertEqual(v.code, "unverified-no-data")
+
+
+class ReviewFixes(unittest.TestCase):
+    def test_plugins_json_absent_keeps_rule_1(self):
+        def drop(files):
+            files["plugins.json"] = None
+        rs = results(drop)
+        v = rs["a-ubuntu-conflict"].installs[0][1]
+        self.assertEqual((v.code, v.rule), ("conflict", "1+3"))
+        for _, v in rs["a-rhel9"].installs:
+            self.assertEqual((v.code, v.rule, v.action), ("vulnerable", "1+3", "vendor-update"))
+        self.assertEqual(rs["a-win"].installs[0][1].rule, "5")  # 369483 stays version-only
+
+    def test_fired_plugin_missing_from_catalog(self):
+        def drop(files):
+            files["plugins.json"] = [p for p in files["plugins.json"] if p["plugin_id"] != 370517]
+        v = results(drop)["a-ubuntu-conflict"].installs[0][1]
+        self.assertEqual((v.code, v.rule), ("conflict", "1+3"))
+
+    def test_uncatalogued_plugin_names(self):
+        def add(files):
+            row = dict(next(r for r in files["findings.json"] if r["asset_id"] == "a-trunc"))
+            row.pop("plugin_output")
+            row.update(role="vulnerable", plugin_id=pid, plugin_name=name)
+            files["findings.json"].append(row)
+        for pid, name, rule in [
+                ("372182", "F5 Networks BIG-IP : PHP vulnerabilities (K000163821)", "1+3"),
+                ("379999", "Some future PHP check", "1+3"),
+                ("370006", "Linux Distros Unpatched Vulnerability : CVE-2026-109618", "2+3"),
+                ("115720", "PHP 8.4.x < 8.4.27", "3")]:
+            with self.subTest(name=name):
+                vs = [v for _, v in results(add)["a-trunc"].installs]
+                self.assertEqual({v.rule for v in vs}, {rule})
+
+    def test_distro_plugin_with_only_non_os_installs(self):
+        out = ("Nessus detected 1 install of PHP:\n\n  Path : /opt/php/bin/php\n"
+               "  Version : 8.3.36\n  Associated Package : None\n  Managed by OS : False\n")
+        for pid, name, code, rule in [
+                ("370210", "RHEL 9 : php (RHSA-2026:87151)", "vulnerable", "1"),
+                ("370006", "Linux Distros Unpatched Vulnerability : CVE-2026-109618",
+                 "no-vendor-fix", "2")]:
+            def edit(files):
+                for r in files["findings.json"]:
+                    if r["asset_id"] == "a-rhel9" and r["role"] == "inventory":
+                        r["plugin_output"] = out
+                    elif r["asset_id"] == "a-rhel9":
+                        r.update(plugin_id=pid, plugin_name=name, php_version="8.3.36")
+            with self.subTest(plugin=pid):
+                (opt, v5), (own, v) = results(edit)["a-rhel9"].installs
+                self.assertEqual((opt.path, v5.code, v5.rule), ("/opt/php/bin/php", "patched", "5"))
+                self.assertEqual(refs(v5, "tenable-plugin"), [])
+                self.assertEqual((own.path, own.version, own.managed_by_os), ("", "8.3.36", None))
+                self.assertEqual((v.code, v.rule), (code, rule))
+                self.assertEqual(refs(v, "tenable-plugin"), [pid])
+
+    def test_rule6_needs_stream_on_module_families(self):
+        def edit(files):
+            for r in files["findings.json"]:
+                if r["asset_id"] == "a-trunc":
+                    r["plugin_output"] = (
+                        "Nessus detected 1 install of PHP:\n\n  Path : /usr/bin/php\n"
+                        "  Version : 8.2.13\n  Associated Package : None\n"
+                        "  Managed by OS : True\n")
+        v = results(edit)["a-trunc"].installs[0][1]
+        self.assertEqual((v.code, v.rule), ("unverified-no-data", "8"))
+        self.assertIn("module stream unknown", v.evidence[0].observed)
 
 
 class LoadRun(unittest.TestCase):
