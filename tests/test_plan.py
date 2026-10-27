@@ -153,6 +153,13 @@ class Owner(unittest.TestCase):
         self.assertEqual(owners.match({"name": "", "ips": ["192.0.2.5"], "fqdns": []}, "k"),
                          "Team B")
 
+    def test_owner_csv_not_utf8(self):
+        csv = write_csv("hostname,owner\nweb01,Jos\u00e9 Garc\u00eda\n", "cp1252")
+        with self.assertRaises(ValueError) as cm:
+            load_owners(csv)
+        self.assertIn("owner file is not UTF-8; save it as CSV UTF-8", str(cm.exception))
+        self.assertNotIsInstance(cm.exception, UnicodeDecodeError)
+
     def test_owner_csv_missing_header(self):
         with self.assertRaises(ValueError) as cm:
             load_owners(write_csv("hostname,team\nweb01,x\n"))

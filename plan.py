@@ -76,6 +76,13 @@ def load_owners(path: Optional[Path]) -> Owners:
     """Read an owner CSV; Excel quirks are handled (BOM, header case, repeated rows)."""
     if path is None:
         return Owners()
+    try:
+        return _read_owners(path)
+    except UnicodeDecodeError:
+        raise ValueError("owner file is not UTF-8; save it as CSV UTF-8 (%s)" % path) from None
+
+
+def _read_owners(path: Path) -> Owners:
     with open(path, newline="", encoding="utf-8-sig") as f:
         reader = csv.reader(f)
         header = [h.strip().lower() for h in next(reader, [])]
