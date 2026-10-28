@@ -121,6 +121,8 @@ python3 ~/.claude/skills/php2shell-tenable/fetch_advisories.py <run folder>
 python3 ~/.claude/skills/php2shell-tenable/render.py <run folder> [--owners <owner file>]
 ```
 
+Without `--owners`, `render.py` uses the owner file remembered in `config.json` beside the run folder. If that file has moved, it stops and names it; pass `--owners` with the new path.
+
 ## Data flows
 
 - **Tenable Hexa AI MCP** (`https://cloud.tenable.com/mcp`). The skill sends read-only queries with your API keys.

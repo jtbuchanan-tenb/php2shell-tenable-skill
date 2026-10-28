@@ -238,6 +238,61 @@ class OwnerFileError(unittest.TestCase):
             shutil.rmtree(d.parent)
 
 
+class RememberedOwnerFile(unittest.TestCase):
+    """SKILL.md step 5 remembers the owner file in config.json beside the run folders."""
+
+    def main(self, *args, config=None):
+        d = run_dir()
+        self.addCleanup(shutil.rmtree, d.parent)
+        if config is not None:
+            (d.parent / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        with mock.patch.object(render, "find_chrome", return_value=None), \
+                mock.patch("sys.stdout", new_callable=io.StringIO), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            code = render.main([str(d), *args])
+        if not (d / "action-plan.json").exists():
+            return code, None, err.getvalue()
+        plan = json.loads((d / "action-plan.json").read_text(encoding="utf-8"))
+        return code, plan["coverage"]["by_owner_source"].get("owner-file", 0), err.getvalue()
+
+    def test_bare_run_uses_remembered_owner_file(self):
+        _, explicit, _ = self.main("--owners", str(OWNERS))
+        code, remembered, _ = self.main(config={"owner_file": str(OWNERS),
+                                                "owner_tag_category": None})
+        self.assertEqual(code, 0)
+        self.assertGreater(explicit, 0)
+        self.assertEqual(remembered, explicit)
+
+    def test_owners_flag_wins_over_config(self):
+        code, n, _ = self.main("--owners", str(OWNERS),
+                               config={"owner_file": "/nonexistent/owners.csv"})
+        self.assertEqual(code, 0)
+        self.assertGreater(n, 0)
+
+    def test_missing_remembered_file_fails(self):
+        code, _, err = self.main(config={"owner_file": "/nonexistent/owners.csv"})
+        self.assertEqual(code, 1)
+        self.assertIn("owner file /nonexistent/owners.csv", err)
+        self.assertIn("--owners", err)
+
+    def test_unreadable_config_fails(self):
+        d = run_dir()
+        self.addCleanup(shutil.rmtree, d.parent)
+        (d.parent / "config.json").write_text("{not json", encoding="utf-8")
+        with mock.patch("sys.stdout", new_callable=io.StringIO), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            code = render.main([str(d)])
+        self.assertEqual(code, 1)
+        self.assertIn("config.json", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+        self.assertFalse((d / "action-plan.json").exists())
+
+    def test_null_owner_file_is_silent(self):
+        code, n, err = self.main(config={"owner_file": None, "owner_tag_category": None})
+        self.assertEqual((code, n), (0, 0))
+        self.assertNotIn("owner file", err)
+
+
 class InProcess(unittest.TestCase):
     def render(self, edit=None, owners=OWNERS):
         d = run_dir(edit)

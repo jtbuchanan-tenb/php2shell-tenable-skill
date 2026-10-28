@@ -518,13 +518,35 @@ def render(run_dir, owners_path=None, pdf=True, now=None) -> tuple:
     return plan, files
 
 
+def remembered_owners(run_dir):
+    """The owner file SKILL.md step 5 saved in config.json beside the run folders, or None.
+
+    A remembered file that is gone, or a config.json that cannot be read, is an error:
+    rendering on without it would silently drop every owner-file assignment.
+    """
+    config = Path(run_dir).resolve().parent / "config.json"
+    try:
+        path = json.loads(config.read_text(encoding="utf-8")).get("owner_file")
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, AttributeError) as exc:
+        raise ValueError("cannot read %s (%s); fix it or pass --owners" % (config, exc)) from None
+    if not path:
+        return None
+    if not Path(path).expanduser().is_file():
+        raise ValueError("owner file %s saved in %s not found; pass --owners with its new path"
+                         % (path, config))
+    return str(Path(path).expanduser())
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Render the PHP2Shell verified action plan.")
     parser.add_argument("run_dir", help="run folder holding findings.json and assets.json")
-    parser.add_argument("--owners", help="owner CSV (asset_id, hostname, fqdn or ip, and owner)")
+    parser.add_argument("--owners", help="owner CSV (asset_id, hostname, fqdn or ip, and owner); "
+                        "defaults to owner_file in config.json beside the run folder")
     args = parser.parse_args(argv)
     try:
-        plan, files = render(args.run_dir, args.owners)
+        plan, files = render(args.run_dir, args.owners or remembered_owners(args.run_dir))
     except (ValueError, OSError) as exc:
         print("render.py: %s" % exc, file=sys.stderr)
         return 1
