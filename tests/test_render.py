@@ -198,6 +198,9 @@ class Fixture(unittest.TestCase):
         self.assertRegex(print_css, r"\.block\.plan\s*\{\s*break-before:\s*page")
         # Print: the ranked table carries rows only; the details follow in their own section.
         self.assertRegex(print_css, r"\.block\.plan tr\.detail[^{]*\{\s*display:\s*none")
+        # Ranked rows must not chain with break-after: avoid, or Chrome pushes the whole
+        # table past the page holding its heading.
+        self.assertRegex(print_css, r"\.block\.plan tr\.row\s*\{\s*break-after:\s*auto")
         self.assertRegex(print_css, r"\.print-detail\s*\{\s*display:\s*block")
         self.assertRegex(print_css, r"\n\s*tr\.detail\s*\{\s*display:\s*table-row")  # Verify first
         section = doc[doc.index('<section class="block print-detail"'):]

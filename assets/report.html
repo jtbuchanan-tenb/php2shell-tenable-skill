@@ -236,6 +236,7 @@ table.evidence td { padding: 5px 8px; }
   td.nowrap .status { white-space: nowrap; }
   .detail-body h4 { break-after: avoid; }
   tr.row { break-inside: avoid; break-after: avoid; }
+  .block.plan tr.row { break-after: auto; }  /* no detail row follows; chaining pushes the table */
   tr.detail { display: table-row; }
   /* Spec: the ranked table first, then the per-asset detail; Verify first stays expanded. */
   .block.plan tr.detail, .screen-only { display: none; }
