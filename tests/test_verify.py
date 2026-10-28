@@ -66,6 +66,10 @@ class CredentialState(unittest.TestCase):
                          "credentialed")
         self.assertEqual(credential_state({"sensors": ["Nessus Agent"], "auth_plugins": []}),
                          "credentialed")
+        # 97993 replaced the deprecated 12634; older scan data can still carry 12634.
+        for pid in (97993, 12634):
+            self.assertEqual(credential_state({"sensors": vm, "auth_plugins": [pid]}),
+                             "credentialed", pid)
         self.assertEqual(credential_state({"sensors": vm, "auth_plugins": [141118, 104410]}),
                          "failed")
         self.assertEqual(credential_state({"sensors": vm, "auth_plugins": [110723]}),

@@ -32,7 +32,7 @@ WAS_BRANCH = {"115719": "8.5", "115720": "8.4", "115721": "8.3", "115722": "8.2"
 
 # Authentication plugins: presence only, never their output. 110723 (no
 # credentials provided) is in neither set, so it reads as not credentialed.
-SUCCESS_IDS = {141118, 110095, 12634, 22869, 10394, 10400, 20811, 24269}
+SUCCESS_IDS = {141118, 110095, 97993, 12634, 22869, 10394, 10400, 20811, 24269}
 FAILURE_IDS = {104410, 110385, 21745, 117885, 24786, 10428, 26917}
 
 VERDICTS = {
