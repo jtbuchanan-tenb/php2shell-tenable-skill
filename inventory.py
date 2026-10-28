@@ -31,10 +31,17 @@ _FIELD = re.compile(r"^\s*(Path|Version|Associated Package|Managed by OS)\s*:\s*
 
 
 def parse_installs(output: str) -> tuple[list[Install], bool]:
-    """Complete installs from plugin output, and whether it was cut short."""
+    """Installs with a whole Path, Version and package, and whether output was cut short."""
     truncated = TRUNCATED in output
+    lines = output.splitlines()
+    if truncated:
+        cut = next(i for i, l in enumerate(lines) if TRUNCATED in l)
+        inline = lines[cut].split(TRUNCATED)[0].strip()  # text before the marker is the cut line
+        lines = [l for l in lines[:cut] if l.strip()]
+        if not inline:
+            lines = lines[:-1]  # otherwise the line before the marker is cut
     blocks: list[dict] = []
-    for line in output.splitlines():
+    for line in lines:
         m = _FIELD.match(line)
         if not m:
             continue
@@ -43,8 +50,14 @@ def parse_installs(output: str) -> tuple[list[Install], bool]:
             blocks.append({})
         if blocks:
             blocks[-1][key] = val
-    if truncated and blocks:
-        blocks.pop()  # last block is cut mid-way
+    if truncated and blocks and not {"Path", "Version", "Associated Package"} <= set(blocks[-1]):
+        blocks.pop()  # the cut fell inside a field that judging needs
+    if truncated and blocks and "Managed by OS" not in blocks[-1]:
+        # Managed by OS belongs to the package; a whole block with the same package has it.
+        same = [b for b in blocks[:-1] if "Managed by OS" in b
+                and b["Associated Package"] == blocks[-1]["Associated Package"]]
+        if same:
+            blocks[-1]["Managed by OS"] = same[0]["Managed by OS"]
     installs = []
     for b in blocks:
         pkg = b.get("Associated Package", "")

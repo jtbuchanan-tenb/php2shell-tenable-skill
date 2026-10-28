@@ -39,6 +39,42 @@ class ParseInstalls(unittest.TestCase):
                          ["/usr/bin/php", "/usr/bin/php-cgi"])
         self.assertTrue(truncated)
 
+    def test_parse_truncated_keeps_block_with_complete_fields(self):
+        # Shape seen live: the cut falls after Associated Package, inside INI source.
+        out = (HEAD.format(3) + block("/usr/bin/php", "8.0.30", MODULE_PKG) + "\n"
+               + f"  Path : /usr/bin/php-cgi\n  Version : 8.0.30\n"
+               + f"  Associated Package : {MODULE_PKG}\n  INI file : /etc/php.ini\n"
+               + "  INI source : PHP binary\n    ... (truncated)\n")
+        installs, truncated = parse_installs(out)
+        # Managed by OS was cut off; the same package on a whole block supplies it.
+        self.assertEqual(installs, [
+            Install("/usr/bin/php", "8.0.30", MODULE_PKG, True),
+            Install("/usr/bin/php-cgi", "8.0.30", MODULE_PKG, True)])
+        self.assertTrue(truncated)
+
+    def test_parse_truncated_block_without_matching_package_stays_unknown(self):
+        out = (HEAD.format(2) + block("/usr/bin/php", "8.0.30", PKG) + "\n"
+               + f"  Path : /opt/php/bin/php\n  Version : 8.3.1\n"
+               + f"  Associated Package : {MODULE_PKG}\n  INI file : /etc/php.ini\n"
+               + "  INI source : PHP binary\n    ... (truncated)\n")
+        installs, _ = parse_installs(out)
+        self.assertIsNone(installs[1].managed_by_os)
+
+    def test_parse_truncated_drops_field_on_cut_line(self):
+        # The line just before the marker may be cut mid-value ("8.3.1" of "8.3.12").
+        out = (HEAD.format(2) + block("/usr/bin/php", "8.0.30", PKG) + "\n"
+               + f"  Path : /opt/php/bin/php\n  Associated Package : None\n"
+               + "  Version : 8.3.1\n    ... (truncated)")
+        installs, _ = parse_installs(out)
+        self.assertEqual([i.path for i in installs], ["/usr/bin/php"])
+
+    def test_parse_truncated_inline_marker_keeps_previous_line(self):
+        # When the marker shares the cut line, every line before it is whole.
+        out = (HEAD.format(2) + block("/usr/bin/php", "8.0.30", PKG)
+               + "\n  Path : /usr/sb ... (truncated)")
+        installs, _ = parse_installs(out)
+        self.assertEqual(installs, [Install("/usr/bin/php", "8.0.30", PKG, True)])
+
     def test_parse_not_os_managed(self):
         out = (HEAD.format(2) + block("/opt/a/php", "8.3.1", "None", "False")
                + "\n" + block("/opt/b/php", "8.3.1", "None", None))
